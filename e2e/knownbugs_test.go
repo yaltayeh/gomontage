@@ -328,29 +328,62 @@ func TestKnownBug_5_TimelineFPSIgnored(t *testing.T) {
 	})
 }
 
-// Bug 6: Profile.Width/Height are never applied (Profile.Params ignores them
-// and the compiler never scales to them).
+// Bug 6 (fixed): Profile.Width/Height set the output size. The timeline size
+// is the composition canvas; the composite is scaled to fit the profile size
+// (aspect preserved, black bars). See timeline.resolveOutputSize.
 func TestKnownBug_6_ProfileResolutionIgnored(t *testing.T) {
-	knownBug(t, 6, "Profile.Width/Height are ignored")
+	requireFFmpeg(t)
 
-	src := genVideo(t, VideoSpec{Dur: time.Second})
+	red := genVideo(t, VideoSpec{Color: "0xFF0000", Dur: time.Second})
+	redTL := func() *timeline.Timeline {
+		tl := newTL() // 320x180
+		tl.AddVideoTrack("v").Add(clip.NewVideo(red), 0)
+		return tl
+	}
 
-	t.Run("custom_profile", func(t *testing.T) {
+	t.Run("custom_profile_upscale", func(t *testing.T) {
 		p := testProfile()
 		p.Width, p.Height = 640, 360
-		tl := newTL() // 320x180
-		tl.AddVideoTrack("v").Add(clip.NewVideo(src), 0)
-		v := probe(t, render(t, tl, p, ".mp4")).Video()
+		out := render(t, redTL(), p, ".mp4")
+		v := probe(t, out).Video()
 		if v.Width != 640 || v.Height != 360 {
 			t.Errorf("output %dx%d, want 640x360 from profile", v.Width, v.Height)
+		}
+		assertPixel(t, out, 500*time.Millisecond, 10, 10, Red, colorTol) // same aspect: no bars
+	})
+
+	t.Run("different_aspect_letterboxed", func(t *testing.T) {
+		p := testProfile()
+		p.Width, p.Height = 180, 320 // vertical output from a 16:9 timeline
+		out := render(t, redTL(), p, ".mp4")
+		v := probe(t, out).Video()
+		if v.Width != 180 || v.Height != 320 {
+			t.Fatalf("output %dx%d, want 180x320", v.Width, v.Height)
+		}
+		assertPixel(t, out, 500*time.Millisecond, 90, 10, Black, colorTol)  // top bar
+		assertPixel(t, out, 500*time.Millisecond, 90, 160, Red, colorTol)   // content
+		assertPixel(t, out, 500*time.Millisecond, 90, 310, Black, colorTol) // bottom bar
+	})
+
+	t.Run("width_only_keeps_timeline_aspect", func(t *testing.T) {
+		p := testProfile()
+		p.Width = 160
+		v := probe(t, render(t, redTL(), p, ".mp4")).Video()
+		if v.Width != 160 || v.Height != 90 {
+			t.Errorf("output %dx%d, want 160x90", v.Width, v.Height)
+		}
+	})
+
+	t.Run("no_profile_size_keeps_timeline", func(t *testing.T) {
+		v := probe(t, render(t, redTL(), testProfile(), ".mp4")).Video()
+		if v.Width != W || v.Height != H {
+			t.Errorf("output %dx%d, want timeline %dx%d", v.Width, v.Height, W, H)
 		}
 	})
 
 	t.Run("YouTube4K", func(t *testing.T) {
 		requireEncoder(t, "libx264")
-		tl := newTL()
-		tl.AddVideoTrack("v").Add(clip.NewVideo(src), 0)
-		v := probe(t, render(t, tl, export.YouTube4K(), ".mp4")).Video()
+		v := probe(t, render(t, redTL(), export.YouTube4K(), ".mp4")).Video()
 		if v.Width != 3840 || v.Height != 2160 {
 			t.Errorf("output %dx%d, want 3840x2160", v.Width, v.Height)
 		}

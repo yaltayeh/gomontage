@@ -54,3 +54,21 @@ profile := export.NewProfile().
     WithFastStart().
     Build()
 ```
+
+## Output Size
+
+The timeline's `Width`/`Height` is the **composition canvas**: every clip is
+fitted, padded and composited at that size. A profile's `Width`/`Height`
+(set by the YouTube and Reel presets, or `WithResolution`) is the **output
+size**:
+
+| Profile sets | Output |
+|---|---|
+| Neither width nor height (ProRes, H265, GIF, custom) | Timeline size |
+| Both | The composite is scaled to fit, aspect ratio preserved, with black bars if the aspect ratios differ |
+| Only one | The other is derived from the timeline's aspect ratio (rounded to even) |
+
+For example, `export.YouTube4K()` on a 1920x1080 timeline produces 3840x2160,
+and `export.Reel()` on a 16:9 timeline produces a 1080x1920 frame with the
+16:9 picture letterboxed in the middle. To avoid bars, make the timeline the
+same aspect ratio as the profile (e.g. `gomontage.Vertical()` with `Reel()`).

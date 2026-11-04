@@ -111,6 +111,16 @@ Writes a full markdown API reference and guides into the `docs/` directory.
 
 ---
 
+## Output size
+
+The timeline size is the composition canvas. If the export profile sets a
+width/height (the YouTube and Reel presets do), the finished video is scaled
+to that size, keeping the aspect ratio and adding black bars if the aspect
+ratios differ. Profiles without a size (ProRes, H265, GIF, custom) output at
+the timeline size. See `docs/templates/export.md`.
+
+---
+
 ## Testing
 
 ```bash
