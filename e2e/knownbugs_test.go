@@ -687,6 +687,36 @@ func TestKnownBug_11_SameImageReusedWithDifferentDurations(t *testing.T) {
 	assertPixel(t, out, 3250*time.Millisecond, cx, cy, Blue, colorTol)
 }
 
+// Bug 12 (found in phase 2): clip fades are applied BEFORE speed effects,
+// but the fade-out start is computed from the clip's output Duration. On a
+// sped-up clip the fade lands in the wrong place: a 4s clip at 2x (2s
+// output) with a 0.5s fade-out goes fully black from ~1.0s instead of
+// fading over 1.5s–2.0s. Same for AudioClip + AudioSpeed + WithFadeOut.
+// (Embedded audio of video clips is already correct: its fades run after
+// the speed change.) Fix: apply fade filters after the effects chain.
+func TestKnownBug_12_FadesWithSpeedMisplaced(t *testing.T) {
+	knownBug(t, 12, "fades on sped-up clips are applied in source time")
+
+	t.Run("video_fade_out_after_speedup", func(t *testing.T) {
+		red := genVideo(t, VideoSpec{Color: "0xFF0000", Dur: 4 * time.Second})
+		tl := newTL()
+		tl.AddVideoTrack("v").Add(clip.NewVideo(red).WithEffect(effects.SpeedUp(2)).WithFadeOut(500*time.Millisecond), 0)
+		out := renderMP4(t, tl)
+		assertPixel(t, out, 1200*time.Millisecond, cx, cy, Red, colorTol)   // before the fade
+		assertPixel(t, out, 1950*time.Millisecond, cx, cy, Black, colorTol) // end of the fade
+	})
+
+	t.Run("audio_fade_out_after_audiospeed", func(t *testing.T) {
+		tone := genTone(t, 440, 4*time.Second)
+		tl := newTL()
+		tl.AddAudioTrack("a").Add(clip.NewAudio(tone).WithEffect(effects.AudioSpeed(2)).WithFadeOut(500*time.Millisecond), 0)
+		out := render(t, tl, export.WAV(), ".wav")
+		if l := audioLevel(t, out, 1100*time.Millisecond, 300*time.Millisecond); l.MeanDB < -40 {
+			t.Errorf("audio before the fade-out = %.1f dB, want the tone (fade should start at 1.5s)", l.MeanDB)
+		}
+	})
+}
+
 func firstLine(err error) string {
 	s := err.Error()
 	if i := strings.IndexByte(s, '\n'); i >= 0 {
