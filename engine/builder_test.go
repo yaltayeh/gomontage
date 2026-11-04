@@ -175,3 +175,20 @@ func TestGraph_InputIndex(t *testing.T) {
 		t.Errorf("expected index -1 for filter, got %d", g.InputIndex(filter))
 	}
 }
+
+func TestBuildCommand_SourceFiltersOnly(t *testing.T) {
+	g := NewGraph()
+	src := g.AddFilter("color", map[string]string{"c": "red", "d": "1"})
+	out := g.AddOutput("output.mp4", nil)
+	g.Connect(src, out, "v0", StreamVideo)
+
+	cmd, err := BuildCommand(g)
+	if err != nil {
+		t.Fatalf("graph with only source filters should build: %v", err)
+	}
+	for _, a := range cmd.Args {
+		if a == "-i" {
+			t.Errorf("expected no -i arguments, got: %s", cmd.String())
+		}
+	}
+}

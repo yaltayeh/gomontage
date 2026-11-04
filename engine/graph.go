@@ -188,3 +188,13 @@ func (g *Graph) Outputs() []*Node {
 func (g *Graph) Nodes() map[string]*Node {
 	return g.nodes
 }
+
+// hasFilters reports whether the graph contains at least one filter node.
+func (g *Graph) hasFilters() bool {
+	for _, n := range g.nodes {
+		if n.Type == NodeFilter {
+			return true
+		}
+	}
+	return false
+}

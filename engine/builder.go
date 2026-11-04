@@ -34,9 +34,13 @@ func (c *Command) String() string {
 // The generated command follows this structure:
 //
 //	ffmpeg -y [global opts] -i input1 -i input2 ... -filter_complex "..." [output opts] output
+//
+// A graph with no file inputs is valid as long as it has filter nodes:
+// source filters such as color or anullsrc generate the streams (this is how
+// timelines made only of color/text clips render).
 func BuildCommand(g *Graph) (*Command, error) {
-	if len(g.inputs) == 0 {
-		return nil, fmt.Errorf("graph has no inputs")
+	if len(g.inputs) == 0 && !g.hasFilters() {
+		return nil, fmt.Errorf("graph has no inputs and no source filters")
 	}
 	if len(g.outputs) == 0 {
 		return nil, fmt.Errorf("graph has no outputs")
