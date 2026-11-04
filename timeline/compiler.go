@@ -90,8 +90,10 @@ func (c *Compiler) Compile(outputPath string, outputParams map[string]string) (*
 // or pillarboxed with black) to that size. See resolveOutputSize for the
 // precedence rules. Export and DryRun use this method.
 func (c *Compiler) CompileProfile(outputPath string, profile *export.Profile) (*engine.Graph, error) {
-	opts := compileOptions{}
+	opts := compileOptions{profileName: profile.Name}
 	opts.outWidth, opts.outHeight = resolveOutputSize(c.timeline.Config(), profile)
+	video, audio := profile.OutputStreams(outputPath)
+	opts.dropVideo, opts.dropAudio = !video, !audio
 	return c.compile(outputPath, profile.Params(), opts)
 }
 
@@ -99,6 +101,13 @@ func (c *Compiler) CompileProfile(outputPath string, profile *export.Profile) (*
 type compileOptions struct {
 	// outWidth/outHeight is the final output size; 0 means the timeline size.
 	outWidth, outHeight int
+
+	// dropVideo/dropAudio leave that stream type out of the output, for
+	// profiles whose container can't carry it (see Profile.OutputStreams).
+	dropVideo, dropAudio bool
+
+	// profileName is used in error messages.
+	profileName string
 }
 
 // resolveOutputSize decides the output frame size.
@@ -204,6 +213,29 @@ func (c *Compiler) compile(outputPath string, outputParams map[string]string, op
 		finalAudioLabel = audioLabels[0]
 	} else if len(audioLabels) > 1 {
 		finalAudioLabel = c.mixAudio(audioLabels)
+	}
+
+	// Phase 4a: Drop streams the output container can't carry. The unused
+	// branch is terminated with a null sink so the graph stays valid.
+	if err := c.checkProfileStreams(opts, finalVideoLabel != "", finalAudioLabel != ""); err != nil {
+		return nil, err
+	}
+	if opts.dropVideo && finalVideoLabel != "" {
+		c.terminate(finalVideoLabel, "nullsink", engine.StreamVideo)
+		finalVideoLabel = ""
+	}
+	if opts.dropAudio && finalAudioLabel != "" {
+		c.terminate(finalAudioLabel, "anullsink", engine.StreamAudio)
+		finalAudioLabel = ""
+	}
+	// FFmpeg rejects a filtergraph whose only sink is a null sink ("A
+	// filtergraph has zero outputs"). If the stream we keep is mapped straight
+	// from an input, give the graph a real output with a pass-through filter.
+	if opts.dropVideo && finalAudioLabel != "" {
+		finalAudioLabel = c.ensureFilterOutput(finalAudioLabel, "anull", engine.StreamAudio)
+	}
+	if opts.dropAudio && finalVideoLabel != "" {
+		finalVideoLabel = c.ensureFilterOutput(finalVideoLabel, "null", engine.StreamVideo)
 	}
 
 	// Phase 4b: Scale the composite to the profile's output size, if any.
@@ -335,6 +367,46 @@ func (c *Compiler) compileTrack(track *VideoTrack, cfg Config, timelineDur time.
 	}
 
 	return trackStream{video: videoLabel, audio: audioLabel}, nil
+}
+
+// checkProfileStreams returns a clear error when the profile can only carry
+// a stream type the timeline doesn't produce.
+func (c *Compiler) checkProfileStreams(opts compileOptions, hasVideo, hasAudio bool) error {
+	name := opts.profileName
+	if name == "" {
+		name = "custom"
+	}
+	if opts.dropVideo && !hasAudio {
+		return fmt.Errorf("export profile %q is audio-only, but the timeline has no audio "+
+			"(add an audio track, or use a video profile)", name)
+	}
+	if opts.dropAudio && !hasVideo {
+		return fmt.Errorf("export profile %q is video-only, but the timeline has no video "+
+			"(add a video track, or use an audio profile such as export.WAV())", name)
+	}
+	return nil
+}
+
+// terminate connects label to a sink filter (nullsink/anullsink) so that a
+// stream that is intentionally not mapped to the output doesn't leave an
+// unconnected filter output in the graph.
+func (c *Compiler) terminate(label, sink string, stream engine.StreamType) {
+	node := c.graph.AddFilter(sink, nil)
+	c.graph.Connect(c.findFilterByLabel(label), node, label, stream)
+}
+
+// ensureFilterOutput returns label unchanged if a filter produces it;
+// otherwise (a raw input stream such as "0:a") it inserts a pass-through
+// filter and returns that filter's label.
+func (c *Compiler) ensureFilterOutput(label, passthrough string, stream engine.StreamType) string {
+	src := c.findFilterByLabel(label)
+	if src == nil || src.Type != engine.NodeInput {
+		return label
+	}
+	node := c.graph.AddFilter(passthrough, nil)
+	out := c.nextLabelFor("pass", node)
+	c.graph.Connect(src, node, label, stream)
+	return out
 }
 
 // scaleToOutput fits the composite into w×h (aspect preserved), pads the rest

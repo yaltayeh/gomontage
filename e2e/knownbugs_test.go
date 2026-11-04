@@ -596,37 +596,70 @@ func TestKnownBug_9_ProbeErrorsSwallowed(t *testing.T) {
 	})
 }
 
-// Bug 10 (found by this suite): the compiler maps every stream it produced,
-// regardless of the profile. Audio-only profiles (WAV/FLAC/MP3) receive a
-// video stream and GIF receives an audio stream; FFmpeg then exits with
-// "Automatic encoder selection failed … (codec none)". Expected: streams the
-// profile can't carry are dropped.
+// Bug 10 (fixed): the compiler maps only the streams the profile's container
+// can carry (export.Profile.OutputStreams). Audio-only profiles used to get a
+// video stream and GIF an audio stream, and FFmpeg exited with "Automatic
+// encoder selection failed … (codec none)".
 func TestKnownBug_10_ProfileStreamMismatch(t *testing.T) {
-	knownBug(t, 10, "audio-only profiles fail on timelines with video; GIF fails with audio")
+	requireFFmpeg(t)
 
 	src := genVideo(t, VideoSpec{Color: "0xFF0000", ToneHz: 440, Dur: time.Second})
 	tl := newTL()
 	tl.AddVideoTrack("v").Add(clip.NewVideo(src), 0)
 
-	t.Run("WAV_from_video_timeline", func(t *testing.T) {
-		out := filepath.Join(t.TempDir(), "x.wav")
-		if err := tl.ExportSilent(export.WAV(), out); err != nil {
-			t.Fatalf("export failed: %v", firstLine(err))
-		}
-		m := probe(t, out)
-		if m.count("video") != 0 || m.count("audio") != 1 {
-			t.Errorf("WAV streams: %+v, want exactly one audio stream", m.Streams)
+	for _, tc := range []struct {
+		name    string
+		profile *export.Profile
+		ext     string
+		enc     string
+		video   int
+		audio   int
+	}{
+		{"WAV_from_video_timeline", export.WAV(), ".wav", "pcm_s16le", 0, 1},
+		{"FLAC_from_video_timeline", export.FLAC(), ".flac", "flac", 0, 1},
+		{"MP3_from_video_timeline", export.MP3(), ".mp3", "libmp3lame", 0, 1},
+		{"GIF_from_video_with_audio", export.GIF(), ".gif", "gif", 1, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			requireEncoder(t, tc.enc)
+			out := filepath.Join(t.TempDir(), "x"+tc.ext)
+			if err := tl.ExportSilent(tc.profile, out); err != nil {
+				t.Fatalf("export failed: %v", firstLine(err))
+			}
+			m := probe(t, out)
+			if m.count("video") != tc.video || m.count("audio") != tc.audio {
+				t.Errorf("streams: %+v, want %d video / %d audio", m.Streams, tc.video, tc.audio)
+			}
+			if tc.audio == 1 {
+				assertDuration(t, "audio", m.Duration, time.Second, 30)
+			}
+		})
+	}
+
+	t.Run("audio_profile_without_audio_errors_early", func(t *testing.T) {
+		silent := newTL()
+		silent.AddVideoTrack("v").Add(clip.NewVideo(genVideo(t, VideoSpec{Dur: time.Second})), 0)
+		_, err := silent.DryRun(export.WAV(), "x.wav")
+		if err == nil || !strings.Contains(err.Error(), "audio-only") || !strings.Contains(err.Error(), "no audio") {
+			t.Errorf("DryRun error = %v, want an audio-only/no audio error", err)
 		}
 	})
 
-	t.Run("GIF_from_video_with_audio", func(t *testing.T) {
-		out := filepath.Join(t.TempDir(), "x.gif")
-		if err := tl.ExportSilent(export.GIF(), out); err != nil {
-			t.Fatalf("export failed: %v", firstLine(err))
+	t.Run("gif_without_video_errors_early", func(t *testing.T) {
+		audioTL := newTL()
+		audioTL.AddAudioTrack("a").Add(clip.NewAudio(genTone(t, 440, time.Second)), 0)
+		_, err := audioTL.DryRun(export.GIF(), "x.gif")
+		if err == nil || !strings.Contains(err.Error(), "video-only") {
+			t.Errorf("DryRun error = %v, want a video-only/no video error", err)
 		}
-		m := probe(t, out)
+	})
+
+	t.Run("av_profile_still_accepts_silent_video", func(t *testing.T) {
+		silent := newTL()
+		silent.AddVideoTrack("v").Add(clip.NewVideo(genVideo(t, VideoSpec{Dur: time.Second})), 0)
+		m := probe(t, renderMP4(t, silent))
 		if m.count("video") != 1 || m.count("audio") != 0 {
-			t.Errorf("GIF streams: %+v, want exactly one video stream", m.Streams)
+			t.Errorf("streams: %+v", m.Streams)
 		}
 	})
 }
