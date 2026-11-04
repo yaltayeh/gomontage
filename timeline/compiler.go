@@ -542,13 +542,16 @@ func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config) (string, *e
 		})
 		bgLabel := c.nextLabelFor("txtbg", bgNode)
 
+		// User-supplied strings are escaped for the filtergraph, and
+		// expansion=none makes '%' literal, so any text renders verbatim.
 		textNode := c.graph.AddFilter("drawtext", map[string]string{
-			"text":      v.Text,
+			"text":      engine.EscapeFilterValue(v.Text),
+			"expansion": "none",
 			"fontsize":  fmt.Sprintf("%d", v.Style.Size),
-			"fontcolor": v.Style.Color,
+			"fontcolor": engine.EscapeFilterValue(v.Style.Color),
 		})
 		if v.Style.Font != "" {
-			textNode.Params["fontfile"] = v.Style.Font
+			textNode.Params["fontfile"] = engine.EscapeFilterValue(v.Style.Font)
 		}
 		textLabel := c.nextLabelFor("gen", textNode)
 		c.graph.Connect(bgNode, textNode, bgLabel, engine.StreamVideo)
