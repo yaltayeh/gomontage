@@ -72,7 +72,7 @@ func (tl *Timeline) exportInternal(ctx context.Context, profile *export.Profile,
 
 	compileStart := time.Now()
 	compiler := NewCompiler(tl)
-	graph, err := compiler.Compile(outputPath, profile.Params())
+	graph, err := compiler.CompileProfile(outputPath, profile)
 	if err != nil {
 		return fmt.Errorf("compilation failed: %w", err)
 	}
@@ -140,7 +140,7 @@ func (tl *Timeline) exportInternal(ctx context.Context, profile *export.Profile,
 //	fmt.Println(cmd.String())  // Prints: ffmpeg -y -i input.mp4 ...
 func (tl *Timeline) DryRun(profile *export.Profile, outputPath string) (*engine.Command, error) {
 	compiler := NewCompiler(tl)
-	graph, err := compiler.Compile(outputPath, profile.Params())
+	graph, err := compiler.CompileProfile(outputPath, profile)
 	if err != nil {
 		return nil, fmt.Errorf("compilation failed: %w", err)
 	}

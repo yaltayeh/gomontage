@@ -9,6 +9,7 @@ import (
 	"github.com/ahmedhodiani/gomontage/clip"
 	"github.com/ahmedhodiani/gomontage/effects"
 	"github.com/ahmedhodiani/gomontage/engine"
+	"github.com/ahmedhodiani/gomontage/export"
 )
 
 // Compiler transforms a Timeline into an FFmpeg engine.Graph that can be
@@ -80,6 +81,55 @@ type trackStream struct {
 // All audio tracks (including audio embedded in video clips) are mixed together
 // using amix, so narration, background music, and sound effects all stack.
 func (c *Compiler) Compile(outputPath string, outputParams map[string]string) (*engine.Graph, error) {
+	return c.compile(outputPath, outputParams, compileOptions{})
+}
+
+// CompileProfile is like Compile but takes the export profile itself, so the
+// compiler can apply the profile's output size: if Profile.Width/Height are
+// set, the finished composite is scaled (aspect ratio preserved, letterboxed
+// or pillarboxed with black) to that size. See resolveOutputSize for the
+// precedence rules. Export and DryRun use this method.
+func (c *Compiler) CompileProfile(outputPath string, profile *export.Profile) (*engine.Graph, error) {
+	opts := compileOptions{}
+	opts.outWidth, opts.outHeight = resolveOutputSize(c.timeline.Config(), profile)
+	return c.compile(outputPath, profile.Params(), opts)
+}
+
+// compileOptions holds profile-derived settings for compile.
+type compileOptions struct {
+	// outWidth/outHeight is the final output size; 0 means the timeline size.
+	outWidth, outHeight int
+}
+
+// resolveOutputSize decides the output frame size.
+//
+// Precedence:
+//   - The timeline's Width/Height is always the composition canvas: clips are
+//     fitted, padded and composited at that size.
+//   - If the profile sets both Width and Height, the composite is scaled to
+//     fit inside that size, preserving aspect ratio, and padded with black.
+//   - If the profile sets only one of them, the other is derived from the
+//     timeline's aspect ratio (rounded to an even number).
+//   - If the profile sets neither, the output is the timeline size.
+func resolveOutputSize(cfg Config, p *export.Profile) (int, int) {
+	if p == nil || (p.Width <= 0 && p.Height <= 0) || cfg.Width <= 0 || cfg.Height <= 0 {
+		return 0, 0
+	}
+	w, h := p.Width, p.Height
+	even := func(v float64) int { return int(v/2+0.5) * 2 }
+	if w <= 0 {
+		w = even(float64(h) * float64(cfg.Width) / float64(cfg.Height))
+	}
+	if h <= 0 {
+		h = even(float64(w) * float64(cfg.Height) / float64(cfg.Width))
+	}
+	if w == cfg.Width && h == cfg.Height {
+		return 0, 0
+	}
+	return w, h
+}
+
+func (c *Compiler) compile(outputPath string, outputParams map[string]string, opts compileOptions) (*engine.Graph, error) {
 	if err := c.timeline.Validate(); err != nil {
 		return nil, fmt.Errorf("timeline validation failed: %w", err)
 	}
@@ -154,6 +204,11 @@ func (c *Compiler) Compile(outputPath string, outputParams map[string]string) (*
 		finalAudioLabel = audioLabels[0]
 	} else if len(audioLabels) > 1 {
 		finalAudioLabel = c.mixAudio(audioLabels)
+	}
+
+	// Phase 4b: Scale the composite to the profile's output size, if any.
+	if finalVideoLabel != "" && opts.outWidth > 0 && opts.outHeight > 0 {
+		finalVideoLabel = c.scaleToOutput(finalVideoLabel, opts.outWidth, opts.outHeight)
 	}
 
 	// Phase 5: Create output node and wire up final streams.
@@ -280,6 +335,33 @@ func (c *Compiler) compileTrack(track *VideoTrack, cfg Config, timelineDur time.
 	}
 
 	return trackStream{video: videoLabel, audio: audioLabel}, nil
+}
+
+// scaleToOutput fits the composite into w×h (aspect preserved), pads the rest
+// with black and normalizes SAR, returning the new video label.
+func (c *Compiler) scaleToOutput(label string, w, h int) string {
+	scaleNode := c.graph.AddFilter("scale", map[string]string{
+		"w":                           fmt.Sprintf("%d", w),
+		"h":                           fmt.Sprintf("%d", h),
+		"force_original_aspect_ratio": "decrease",
+	})
+	scaleLabel := c.nextLabelFor("oscale", scaleNode)
+	c.graph.Connect(c.findFilterByLabel(label), scaleNode, label, engine.StreamVideo)
+
+	padNode := c.graph.AddFilter("pad", map[string]string{
+		"w":     fmt.Sprintf("%d", w),
+		"h":     fmt.Sprintf("%d", h),
+		"x":     fmt.Sprintf("(%d-iw)/2", w),
+		"y":     fmt.Sprintf("(%d-ih)/2", h),
+		"color": "black",
+	})
+	padLabel := c.nextLabelFor("opad", padNode)
+	c.graph.Connect(scaleNode, padNode, scaleLabel, engine.StreamVideo)
+
+	sarNode := c.graph.AddFilter("setsar", map[string]string{"ratio": "1/1"})
+	sarLabel := c.nextLabelFor("osar", sarNode)
+	c.graph.Connect(padNode, sarNode, padLabel, engine.StreamVideo)
+	return sarLabel
 }
 
 // overlayTracks chains overlay filters across all track streams.
