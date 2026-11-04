@@ -108,3 +108,15 @@ gomontage docs
 ```
 
 Writes a full markdown API reference and guides into the `docs/` directory.
+
+---
+
+## Testing
+
+```bash
+make test            # fast unit tests (no FFmpeg)
+make test-e2e        # end-to-end renders with real FFmpeg (known bugs skipped)
+make test-e2e-bugs   # also run known-bug tests (GOMONTAGE_KNOWN_BUGS=1; expected to fail)
+```
+
+See [TESTING.md](TESTING.md) for details.
