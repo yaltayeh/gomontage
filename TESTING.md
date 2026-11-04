@@ -58,7 +58,7 @@ it becomes a permanent regression test.
 | 9 | Missing files / trims past source end are not reported | fixed |
 | 10 | Audio-only profiles fail on timelines with video; GIF fails with audio | fixed |
 | 11 | Reusing one image with different durations truncates the output | fixed |
-| 12 | Fades on sped-up clips are applied in source time (wrong place) | open |
+| 12 | Fades on sped-up clips are applied in source time (wrong place) | fixed |
 
 Fixed bugs keep their `TestKnownBug_<N>_*` test, which now runs in the
 default mode as a regression test.

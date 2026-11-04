@@ -611,6 +611,20 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		}
 	}
 
+	// Apply composable video effects from the clip's Effects() list.
+	for _, e := range cl.Effects() {
+		if e.Target() != effects.TargetVideo && e.Target() != effects.TargetBoth {
+			continue
+		}
+		filterNode := c.graph.AddFilter(e.FilterName(), e.FilterParams())
+		filterLabel := c.nextLabelFor("vfx", filterNode)
+		c.graph.Connect(lastNode, filterNode, currentLabel, engine.StreamVideo)
+		currentLabel = filterLabel
+		lastNode = filterNode
+	}
+
+	// Fades run after effects so that fade times (computed from the clip's
+	// output Duration) are in output time, also on sped-up/slowed clips.
 	// Apply fade in (works for both generated and file-based clips).
 	// On overlay tracks, alpha=1 fades the opacity (alpha channel) rather than
 	// the RGB values — the clip fades in from transparent, showing the layers
@@ -649,18 +663,6 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamVideo)
 		currentLabel = fadeLabel
 		lastNode = fadeNode
-	}
-
-	// Apply composable video effects from the clip's Effects() list.
-	for _, e := range cl.Effects() {
-		if e.Target() != effects.TargetVideo && e.Target() != effects.TargetBoth {
-			continue
-		}
-		filterNode := c.graph.AddFilter(e.FilterName(), e.FilterParams())
-		filterLabel := c.nextLabelFor("vfx", filterNode)
-		c.graph.Connect(lastNode, filterNode, currentLabel, engine.StreamVideo)
-		currentLabel = filterLabel
-		lastNode = filterNode
 	}
 
 	// Normalize the frame rate to the timeline FPS. This runs last so that
@@ -800,6 +802,22 @@ func (c *Compiler) compileAudioEntry(entry Placement) (string, error) {
 		lastNode = volNode
 	}
 
+	// Apply composable audio effects from the clip's Effects() list.
+	for _, e := range cl.Effects() {
+		if e.Target() != effects.TargetAudio && e.Target() != effects.TargetBoth {
+			continue
+		}
+		currentLabel, lastNode = c.compileAudioEffect(e, currentLabel, lastNode, "afx")
+	}
+
+	// Keep audio in sync with SpeedUp/SlowDown applied to the picture.
+	if f := implicitAudioTempo(cl); f != 1.0 {
+		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, "afxspd")
+		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "afxfit")
+	}
+
+	// Fades run after effects (AudioSpeed, implicit tempo) so that fade times
+	// are in output time, consistent with the video path.
 	// Apply audio fade in.
 	if cl.FadeInDuration() > 0 {
 		fadeNode := c.graph.AddFilter("afade", map[string]string{
@@ -825,20 +843,6 @@ func (c *Compiler) compileAudioEntry(entry Placement) (string, error) {
 		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamAudio)
 		currentLabel = fadeLabel
 		lastNode = fadeNode
-	}
-
-	// Apply composable audio effects from the clip's Effects() list.
-	for _, e := range cl.Effects() {
-		if e.Target() != effects.TargetAudio && e.Target() != effects.TargetBoth {
-			continue
-		}
-		currentLabel, lastNode = c.compileAudioEffect(e, currentLabel, lastNode, "afx")
-	}
-
-	// Keep audio in sync with SpeedUp/SlowDown applied to the picture.
-	if f := implicitAudioTempo(cl); f != 1.0 {
-		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, "afxspd")
-		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "afxfit")
 	}
 
 	// Apply delay if the clip doesn't start at 0.
