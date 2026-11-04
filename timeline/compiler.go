@@ -745,6 +745,12 @@ func (c *Compiler) compileAudioEntry(entry Placement) (string, error) {
 		currentLabel, lastNode = c.compileAudioEffect(e, currentLabel, lastNode, "afx")
 	}
 
+	// Keep audio in sync with SpeedUp/SlowDown applied to the picture.
+	if f := implicitAudioTempo(cl); f != 1.0 {
+		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, "afxspd")
+		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "afxfit")
+	}
+
 	// Apply delay if the clip doesn't start at 0.
 	if entry.StartAt > 0 {
 		delayNode := c.graph.AddFilter("adelay", map[string]string{
@@ -807,6 +813,12 @@ func (c *Compiler) compileAudioFromVideoEntry(entry Placement) (string, error) {
 		currentLabel, lastNode = c.compileAudioEffect(e, currentLabel, lastNode, "vafx")
 	}
 
+	// Keep audio in sync with SpeedUp/SlowDown applied to the picture.
+	if f := implicitAudioTempo(cl); f != 1.0 {
+		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, "vafxspd")
+		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "vafxfit")
+	}
+
 	// Apply the clip's fade in/out to its embedded audio, matching the
 	// visual fade. This runs last so the fade-out start (computed from the
 	// clip's output Duration) is in output time even after speed changes.
@@ -833,6 +845,43 @@ func (c *Compiler) compileAudioFromVideoEntry(entry Placement) (string, error) {
 	}
 
 	return currentLabel, nil
+}
+
+// fitAudioDuration pads (with silence) or trims an audio stream to exactly d.
+// atempo drops a few milliseconds at end of stream per stage, so after
+// retiming we pin the audio length to the clip's output duration to keep
+// later clips in a sequence in sync.
+func (c *Compiler) fitAudioDuration(d time.Duration, currentLabel string, lastNode *engine.Node, prefix string) (string, *engine.Node) {
+	padNode := c.graph.AddFilter("apad", map[string]string{"whole_dur": formatSeconds(d)})
+	padLabel := c.nextLabelFor(prefix, padNode)
+	c.graph.Connect(lastNode, padNode, currentLabel, engine.StreamAudio)
+
+	trimNode := c.graph.AddFilter("atrim", map[string]string{"end": formatSeconds(d)})
+	trimLabel := c.nextLabelFor(prefix, trimNode)
+	c.graph.Connect(padNode, trimNode, padLabel, engine.StreamAudio)
+	return trimLabel, trimNode
+}
+
+// implicitAudioTempo returns the tempo factor that the clip's audio needs so
+// it stays in sync with video speed effects (effects.SpeedUp/SlowDown).
+//
+// It is the product of all SpeedEffect factors on the clip, or 1.0 if the
+// clip has none. If the clip already has an explicit effects.AudioSpeed, the
+// caller is assumed to manage audio speed themselves and 1.0 is returned,
+// so the older "SpeedUp(2) + AudioSpeed(2)" pattern keeps working unchanged.
+func implicitAudioTempo(cl clip.Clip) float64 {
+	factor := 1.0
+	for _, e := range cl.Effects() {
+		switch v := e.(type) {
+		case *effects.AudioSpeedEffect:
+			return 1.0
+		case *effects.SpeedEffect:
+			if v.Factor() > 0 {
+				factor *= v.Factor()
+			}
+		}
+	}
+	return factor
 }
 
 // insertVideoGaps walks sorted video labels and inserts black gap clips

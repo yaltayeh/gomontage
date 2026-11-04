@@ -67,6 +67,11 @@ effects.SpeedUp(0.5)   // Half speed (slow motion)
 effects.SlowDown(2.0)  // Same as SpeedUp(0.5)
 ```
 
+Speed effects retime the clip's audio too (pitch-preserving `atempo`), so
+picture and sound stay in sync, including inside sequences. If you add an
+explicit `effects.AudioSpeed(...)` to the same clip, it takes over and the
+audio is retimed only by that factor.
+
 ## Audio Effects
 
 ### Audio Fade

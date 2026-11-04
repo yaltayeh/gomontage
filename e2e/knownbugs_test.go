@@ -428,10 +428,11 @@ func TestKnownBug_7_EmbeddedAudioIgnoresFades(t *testing.T) {
 	}
 }
 
-// Bug 8: effects.SpeedUp only retimes video (setpts); embedded audio keeps
-// its original length unless AudioSpeed is added separately.
+// Bug 8 (fixed): effects.SpeedUp/SlowDown now also retime the clip's audio
+// (atempo chain), unless the clip has an explicit effects.AudioSpeed, in
+// which case the caller controls audio speed (backward compatible).
 func TestKnownBug_8_SpeedUpAudioDrift(t *testing.T) {
-	knownBug(t, 8, "SpeedUp retimes video only; embedded audio drifts")
+	requireFFmpeg(t)
 
 	src := genVideo(t, VideoSpec{Color: "0xFF0000", ToneHz: 440, Dur: 2 * time.Second})
 
@@ -450,6 +451,38 @@ func TestKnownBug_8_SpeedUpAudioDrift(t *testing.T) {
 		m := probe(t, renderMP4(t, tl))
 		assertDuration(t, "video", m.Video().Duration, 2*time.Second, 30)
 		assertDuration(t, "audio", m.Audio().Duration, 2*time.Second, 30)
+	})
+
+	t.Run("tone_ends_at_cut", func(t *testing.T) {
+		// Sped-up tone clip (2s → 1s) followed by a silent clip: the tone
+		// must stop at the cut, not spill into the second clip.
+		silent := genVideo(t, VideoSpec{Color: "0x0000FF", Dur: time.Second})
+		tl := newTL()
+		tl.AddVideoTrack("v").AddSequence(clip.NewVideo(src).WithEffect(effects.SpeedUp(2)), clip.NewVideo(silent))
+		out := renderMP4(t, tl)
+		if l := audioLevel(t, out, 200*time.Millisecond, 600*time.Millisecond); l.MeanDB < -40 {
+			t.Errorf("expected tone during sped-up clip, got %.1f dB", l.MeanDB)
+		}
+		if l := audioLevel(t, out, 1200*time.Millisecond, 600*time.Millisecond); l.MeanDB > -60 {
+			t.Errorf("expected silence after the cut at 1s, got %.1f dB", l.MeanDB)
+		}
+		assertPixel(t, out, 1500*time.Millisecond, cx, cy, Blue, colorTol)
+	})
+
+	t.Run("slow_down_4x_chains_atempo", func(t *testing.T) {
+		short := genVideo(t, VideoSpec{Color: "0xFF0000", ToneHz: 440, Dur: 500 * time.Millisecond})
+		tl := newTL()
+		tl.AddVideoTrack("v").Add(clip.NewVideo(short).WithEffect(effects.SlowDown(4)), 0)
+		m := probe(t, renderMP4(t, tl))
+		assertDuration(t, "video", m.Video().Duration, 2*time.Second, 30)
+		assertDuration(t, "audio", m.Audio().Duration, 2*time.Second, 30)
+	})
+
+	t.Run("explicit_audiospeed_not_doubled", func(t *testing.T) {
+		tl := newTL()
+		tl.AddVideoTrack("v").Add(clip.NewVideo(src).WithEffect(effects.SpeedUp(2)).WithEffect(effects.AudioSpeed(2)), 0)
+		m := probe(t, renderMP4(t, tl))
+		assertDuration(t, "audio", m.Audio().Duration, time.Second, 30) // not 0.5s
 	})
 }
 
