@@ -664,14 +664,12 @@ func TestKnownBug_10_ProfileStreamMismatch(t *testing.T) {
 	})
 }
 
-// Bug 11 (found by this suite): the compiler shares one FFmpeg input per
-// source path (getOrAddInput) but sets image input options on it per clip
-// (-loop/-framerate/-t in compileVideoEntry). Using the same image twice with
-// different durations makes the last -t win for every use. Observed: a
-// 2s image + 1s video + 0.5s image (same PNG) renders 0.5s blue + 1s red +
-// 0.5s blue = 2s instead of 3.5s (the first image is cut to 0.5s).
+// Bug 11 (fixed): image inputs are keyed by path and duration, so reusing
+// the same image with different durations gives each use its own
+// -loop/-t input. Previously the last -t won for every use: a 2s image +
+// 1s video + 0.5s image (same PNG) rendered 0.5s + 1s + 0.5s = 2s.
 func TestKnownBug_11_SameImageReusedWithDifferentDurations(t *testing.T) {
-	knownBug(t, 11, "reusing one image file with different durations truncates the output")
+	requireFFmpeg(t)
 
 	img := genOpaquePNG(t, W, H, "0x0000FF")
 	red := genVideo(t, VideoSpec{Color: "0xFF0000", Dur: time.Second})
@@ -685,11 +683,8 @@ func TestKnownBug_11_SameImageReusedWithDifferentDurations(t *testing.T) {
 
 	assertDuration(t, "video", probe(t, out).Video().Duration, 3500*time.Millisecond, 30)
 	assertPixel(t, out, time.Second, cx, cy, Blue, colorTol)
-	if probe(t, out).Video().Duration > 2600*time.Millisecond {
-		assertPixel(t, out, 2500*time.Millisecond, cx, cy, Red, colorTol)
-	} else {
-		t.Errorf("output too short to contain the red clip at 2s–3s")
-	}
+	assertPixel(t, out, 2500*time.Millisecond, cx, cy, Red, colorTol)
+	assertPixel(t, out, 3250*time.Millisecond, cx, cy, Blue, colorTol)
 }
 
 func firstLine(err error) string {
