@@ -56,12 +56,25 @@ func (c *Compiler) nextLabelFor(prefix string, node *engine.Node) string {
 
 // getOrAddInput returns the input node for a source path, adding it if needed.
 func (c *Compiler) getOrAddInput(path string) *engine.Node {
-	if node, ok := c.inputMap[path]; ok {
+	return c.getOrAddInputKey(path, path)
+}
+
+// getOrAddInputKey is like getOrAddInput but deduplicates on key instead of
+// the path, for inputs that carry per-use input options.
+func (c *Compiler) getOrAddInputKey(key, path string) *engine.Node {
+	if node, ok := c.inputMap[key]; ok {
 		return node
 	}
 	node := c.graph.AddInput(path)
-	c.inputMap[path] = node
+	c.inputMap[key] = node
 	return node
+}
+
+// imageInputKey identifies an image input. Image inputs carry per-use
+// options (-loop 1 -framerate -t <duration>), so each distinct duration of
+// the same file needs its own -i; identical uses still share one.
+func imageInputKey(path string, d time.Duration) string {
+	return fmt.Sprintf("%s\x00image\x00%d", path, d)
 }
 
 // trackStream holds the compiled video and audio output labels for a single
@@ -496,7 +509,12 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		currentLabel = genLabel
 		lastNode = genNode
 	} else {
-		inputNode := c.getOrAddInput(path)
+		var inputNode *engine.Node
+		if cl.ClipType() == clip.TypeImage {
+			inputNode = c.getOrAddInputKey(imageInputKey(path, cl.Duration()), path)
+		} else {
+			inputNode = c.getOrAddInput(path)
+		}
 		inputIdx := c.graph.InputIndex(inputNode)
 
 		// Image clips need special input-level flags to produce a video stream
