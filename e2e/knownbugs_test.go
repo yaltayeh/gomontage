@@ -4,7 +4,9 @@ package e2e
 
 import (
 	"fmt"
+	"github.com/ahmedhodiani/gomontage/engine"
 	"image"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -139,12 +141,13 @@ func TestKnownBug_2_PositionAndSizeIgnored(t *testing.T) {
 	})
 }
 
-// Bug 3: drawtext text is not escaped (compileGeneratedClip passes the raw
-// string; engine/builder.go joins params with ':' and chains with ';').
+// Bug 3 (fixed): drawtext text is escaped for the filtergraph
+// (engine.EscapeFilterValue) and drawtext runs with expansion=none.
 func TestKnownBug_3_DrawtextNotEscaped(t *testing.T) {
-	knownBug(t, 3, "drawtext text with : ' % \\ ; breaks the filter graph")
+	requireFFmpeg(t)
 
 	nasty := `Time: 5 o'clock; 100% \o/`
+	arabic := "قريباً"
 
 	// Structural check — runs without the drawtext filter. With correct
 	// escaping, the filter graph must have the same shape as plain text.
@@ -166,7 +169,9 @@ func TestKnownBug_3_DrawtextNotEscaped(t *testing.T) {
 					if j := strings.LastIndex(body, "["); j >= 0 {
 						body = body[:j]
 					}
-					for _, kv := range splitUnescaped(body, ':') {
+					// FFmpeg removes the filtergraph-level escaping before
+					// splitting the option list on ':'.
+					for _, kv := range splitUnescaped(unescapeOnce(body), ':') {
 						drawtextKeys = append(drawtextKeys, strings.SplitN(kv, "=", 2)[0])
 					}
 				}
@@ -174,24 +179,69 @@ func TestKnownBug_3_DrawtextNotEscaped(t *testing.T) {
 			return len(parts), drawtextKeys
 		}
 		wantChains, wantKeys := shape("plain")
-		gotChains, gotKeys := shape(nasty)
-		if gotChains != wantChains {
-			t.Errorf("filter graph has %d chains with special text, %d with plain text", gotChains, wantChains)
-		}
-		if strings.Join(gotKeys, ",") != strings.Join(wantKeys, ",") {
-			t.Errorf("drawtext options parsed as %v, want %v", gotKeys, wantKeys)
+		for _, text := range []string{nasty, arabic} {
+			gotChains, gotKeys := shape(text)
+			if gotChains != wantChains {
+				t.Errorf("%q: filter graph has %d chains, %d with plain text", text, gotChains, wantChains)
+			}
+			if strings.Join(gotKeys, ",") != strings.Join(wantKeys, ",") {
+				t.Errorf("%q: drawtext options parsed as %v, want %v", text, gotKeys, wantKeys)
+			}
 		}
 	})
 
-	t.Run("render", func(t *testing.T) {
-		requireFilter(t, "drawtext")
-		tl := redBase(t)
-		tl.AddVideoTrack("t").Add(clip.NewText(nasty, clip.DefaultTextStyle()).WithDuration(time.Second), 0)
-		out := filepath.Join(t.TempDir(), "x.mp4")
-		if err := tl.ExportSilent(testProfile(), out); err != nil {
-			t.Fatalf("export with special characters in text failed: %v", err)
-		}
-	})
+	// Render the text and compare against a reference render that feeds the
+	// exact same string through drawtext's textfile= option (no escaping
+	// involved). Identical decoded frames prove the text arrived verbatim.
+	for name, text := range map[string]string{"special_chars": nasty, "arabic": arabic} {
+		t.Run("render_exact_"+name, func(t *testing.T) {
+			requireFilter(t, "drawtext")
+			tl := redBase(t)
+			style := clip.DefaultTextStyle()
+			if name == "arabic" {
+				// FFmpeg's default font has no Arabic glyphs (renders empty
+				// boxes). Use a real Arabic font, copied to a path with
+				// characters that also need escaping in fontfile=.
+				style.Font = arabicFontInNastyPath(t)
+			}
+			tl.AddVideoTrack("t").Add(clip.NewText(text, style).WithDuration(time.Second), 0)
+
+			dir := t.TempDir()
+			out := filepath.Join(dir, "lib.mp4")
+			if err := tl.ExportSilent(testProfile(), out); err != nil {
+				t.Fatalf("export failed: %v", firstLine(err))
+			}
+			img := frameAt(t, out, 500*time.Millisecond)
+			if n := countNear(img, image.Rect(0, 0, W, H), RGB{255, 255, 255}, 40); n == 0 {
+				t.Fatalf("no white text pixels rendered")
+			}
+
+			// Reference: same command, text= replaced by textfile=.
+			txt := filepath.Join(dir, "text.txt")
+			if err := os.WriteFile(txt, []byte(text), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			ref := filepath.Join(dir, "ref.mp4")
+			cmd, err := tl.DryRun(testProfile(), ref)
+			if err != nil {
+				t.Fatal(err)
+			}
+			needle := "text=" + engine.EscapeFilterValue(text)
+			for i, a := range cmd.Args {
+				if strings.Contains(a, needle) {
+					cmd.Args[i] = strings.Replace(a, needle, "textfile="+engine.EscapeFilterValue(txt), 1)
+				}
+			}
+			runFFmpeg(t, cmd.Args[1:]...) // drop the leading -y; runFFmpeg adds it
+
+			md5 := func(p string) string {
+				return string(runFFmpeg(t, "-v", "error", "-i", p, "-map", "0:v", "-c:v", "rawvideo", "-f", "md5", "-"))
+			}
+			if a, b := md5(out), md5(ref); a != b {
+				t.Errorf("rendered text differs from textfile= reference (%s vs %s)", a, b)
+			}
+		})
+	}
 }
 
 // Bug 4: a timeline containing only generated clips (color/text) fails with
@@ -446,6 +496,37 @@ func firstLine(err error) string {
 	return s
 }
 
+// arabicFontInNastyPath finds an Arabic-capable font and copies it into a
+// directory whose name contains spaces, ':', ',', '[' and ']'.
+func arabicFontInNastyPath(t *testing.T) string {
+	t.Helper()
+	candidates := []string{
+		"/System/Library/Fonts/Supplemental/Tahoma.ttf",
+		"/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+		"/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf",
+		"/usr/share/fonts/noto/NotoSansArabic-Regular.ttf",
+		"/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+		"/usr/share/fonts/TTF/DejaVuSans.ttf",
+	}
+	for _, c := range candidates {
+		data, err := os.ReadFile(c)
+		if err != nil {
+			continue
+		}
+		dir := filepath.Join(t.TempDir(), "My Fonts: v1, [ar]")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		dst := filepath.Join(dir, "arabic font.ttf")
+		if err := os.WriteFile(dst, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return dst
+	}
+	t.Skip("e2e: no Arabic-capable font found (looked for Tahoma, Arial Unicode, Noto Sans Arabic, DejaVu Sans)")
+	return ""
+}
+
 // --- helpers for filter-graph inspection ---
 
 func filterComplexArg(args []string) string {
@@ -455,6 +536,24 @@ func filterComplexArg(args []string) string {
 		}
 	}
 	return ""
+}
+
+// unescapeOnce removes one level of backslash escaping (\x → x) and
+// single-quote quoting, as FFmpeg's filtergraph parser does for filter args.
+func unescapeOnce(s string) string {
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		switch {
+		case s[i] == '\\' && i+1 < len(s):
+			i++
+			b.WriteByte(s[i])
+		case s[i] == '\'':
+			// quotes delimit a literal span; drop them
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return b.String()
 }
 
 // splitUnescaped splits s on sep, honoring FFmpeg filtergraph escaping:
