@@ -72,3 +72,18 @@ For example, `export.YouTube4K()` on a 1920x1080 timeline produces 3840x2160,
 and `export.Reel()` on a 16:9 timeline produces a 1080x1920 frame with the
 16:9 picture letterboxed in the middle. To avoid bars, make the timeline the
 same aspect ratio as the profile (e.g. `gomontage.Vertical()` with `Reel()`).
+
+## Which Streams Are Written
+
+Only the streams the output container can hold are written
+(`Profile.OutputStreams`; the container comes from `Profile.Format` or the
+file extension):
+
+| Profile / container | Streams written | Error before rendering if… |
+|---|---|---|
+| Audio-only: MP3, WAV, FLAC (and ogg, opus, m4a, aac, aiff) | audio | the timeline has no audio |
+| Video-only: GIF (and apng) | video | the timeline has no video |
+| Everything else (mp4, mov, mkv, …) | video and audio, whichever exist | never |
+
+So `tl.Export(export.WAV(), "audio.wav")` on a timeline with video extracts
+the mixed soundtrack, and `export.GIF()` drops the audio.
