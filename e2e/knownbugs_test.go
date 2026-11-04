@@ -687,15 +687,13 @@ func TestKnownBug_11_SameImageReusedWithDifferentDurations(t *testing.T) {
 	assertPixel(t, out, 3250*time.Millisecond, cx, cy, Blue, colorTol)
 }
 
-// Bug 12 (found in phase 2): clip fades are applied BEFORE speed effects,
-// but the fade-out start is computed from the clip's output Duration. On a
-// sped-up clip the fade lands in the wrong place: a 4s clip at 2x (2s
-// output) with a 0.5s fade-out goes fully black from ~1.0s instead of
-// fading over 1.5s–2.0s. Same for AudioClip + AudioSpeed + WithFadeOut.
-// (Embedded audio of video clips is already correct: its fades run after
-// the speed change.) Fix: apply fade filters after the effects chain.
+// Bug 12 (fixed): clip fades used to be applied BEFORE speed effects while
+// the fade times were computed in output time, so on a 4s clip at 2x the
+// 0.5s fade-out turned the picture black from ~1.0s instead of fading over
+// 1.5s–2.0s (same for AudioClip + AudioSpeed). Fades now run after the
+// effects chain, as they already did for embedded audio (#7).
 func TestKnownBug_12_FadesWithSpeedMisplaced(t *testing.T) {
-	knownBug(t, 12, "fades on sped-up clips are applied in source time")
+	requireFFmpeg(t)
 
 	t.Run("video_fade_out_after_speedup", func(t *testing.T) {
 		red := genVideo(t, VideoSpec{Color: "0xFF0000", Dur: 4 * time.Second})
@@ -704,6 +702,18 @@ func TestKnownBug_12_FadesWithSpeedMisplaced(t *testing.T) {
 		out := renderMP4(t, tl)
 		assertPixel(t, out, 1200*time.Millisecond, cx, cy, Red, colorTol)   // before the fade
 		assertPixel(t, out, 1950*time.Millisecond, cx, cy, Black, colorTol) // end of the fade
+	})
+
+	t.Run("video_fade_in_after_slowdown", func(t *testing.T) {
+		// 1s clip slowed 2x = 2s; a 1s fade-in must be complete at 1s of
+		// output time (it used to stretch to 2s).
+		red := genVideo(t, VideoSpec{Color: "0xFF0000", Dur: time.Second})
+		tl := newTL()
+		tl.AddVideoTrack("v").Add(clip.NewVideo(red).WithEffect(effects.SlowDown(2)).WithFadeIn(time.Second), 0)
+		out := renderMP4(t, tl)
+		assertDuration(t, "video", probe(t, out).Video().Duration, 2*time.Second, 30)
+		assertPixel(t, out, 0, cx, cy, Black, colorTol)
+		assertPixel(t, out, 1200*time.Millisecond, cx, cy, Red, colorTol)
 	})
 
 	t.Run("audio_fade_out_after_audiospeed", func(t *testing.T) {
