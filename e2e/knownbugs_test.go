@@ -244,10 +244,23 @@ func TestKnownBug_3_DrawtextNotEscaped(t *testing.T) {
 	}
 }
 
-// Bug 4: a timeline containing only generated clips (color/text) fails with
-// "graph has no inputs" (engine/builder.go BuildCommand).
+// Bug 4 (fixed): a timeline containing only generated clips (color/text)
+// used to fail with "graph has no inputs" (engine/builder.go BuildCommand).
+// Source filters now stand in for file inputs.
 func TestKnownBug_4_GeneratedOnlyTimeline(t *testing.T) {
-	knownBug(t, 4, "timeline with only color/text clips fails: graph has no inputs")
+	requireFFmpeg(t)
+
+	t.Run("color_sequence_with_gap", func(t *testing.T) {
+		tl := newTL()
+		v := tl.AddVideoTrack("v")
+		v.Add(clip.NewColor("#FF0000", 0, 0).WithDuration(time.Second), 0)
+		v.Add(clip.NewColor("#0000FF", 0, 0).WithDuration(time.Second), 2*time.Second)
+		out := renderMP4(t, tl)
+		assertDuration(t, "video", probe(t, out).Video().Duration, 3*time.Second, 30)
+		assertPixel(t, out, 500*time.Millisecond, cx, cy, Red, colorTol)
+		assertPixel(t, out, 1500*time.Millisecond, cx, cy, Black, colorTol)
+		assertPixel(t, out, 2500*time.Millisecond, cx, cy, Blue, colorTol)
+	})
 
 	t.Run("color_only", func(t *testing.T) {
 		tl := newTL()
@@ -267,6 +280,10 @@ func TestKnownBug_4_GeneratedOnlyTimeline(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "x.mp4")
 		if err := tl.ExportSilent(testProfile(), out); err != nil {
 			t.Fatalf("export failed: %v", err)
+		}
+		assertDuration(t, "video", probe(t, out).Video().Duration, time.Second, 30)
+		if n := countNear(frameAt(t, out, 500*time.Millisecond), image.Rect(0, 0, W, H), RGB{255, 255, 255}, 40); n == 0 {
+			t.Error("no white text pixels in text-only render")
 		}
 	})
 }
