@@ -3,6 +3,26 @@
 Clips are the fundamental building blocks of a Gomontage project. Every clip
 is **immutable** — transform methods return new clips, leaving originals unchanged.
 
+## Loading Files and Errors
+
+`clip.NewVideo`, `clip.NewAudio` and `clip.NewImage` never fail. If you want
+an error as soon as a file is missing or unreadable, use the `Load` variants:
+
+```go
+video, err := clip.LoadVideo("resources/video/interview.mp4") // (*VideoClip, error)
+music, err := clip.LoadAudio("resources/audio/music.mp3")     // (*AudioClip, error)
+logo, err  := clip.LoadImage("resources/images/logo.png")     // (*ImageClip, error)
+```
+
+Errors name the file and the problem: `file not found`, `cannot read media`,
+`file has no video stream`, `file has no audio stream`.
+
+Problems with clips created by `NewVideo`/`NewAudio` are still caught before
+anything renders: `Timeline.Validate()` (which `Export` and `DryRun` run)
+reports missing or unreadable sources, and trims or `WithDuration` values
+that go past the end of the source file. `clip.SourceProblem(c)` runs the
+same check for a single clip.
+
 ## Clip Types
 
 ### VideoClip

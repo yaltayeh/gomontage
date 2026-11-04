@@ -2,6 +2,8 @@ package timeline
 
 import (
 	"fmt"
+
+	"github.com/ahmedhodiani/gomontage/clip"
 	"sort"
 	"time"
 )
@@ -124,6 +126,19 @@ func (tl *Timeline) Validate() error {
 		return fmt.Errorf("timeline has no clips")
 	}
 
+	// Check every clip's source: missing/unreadable files (recorded by
+	// clip.NewVideo/NewAudio) and trims past the end of the source.
+	for _, track := range tl.videoTracks {
+		if err := validateSources(track.Name(), track.entries); err != nil {
+			return err
+		}
+	}
+	for _, track := range tl.audioTracks {
+		if err := validateSources(track.Name(), track.entries); err != nil {
+			return err
+		}
+	}
+
 	// Check for overlapping clips on video tracks. A single video track
 	// can only show one clip at a time — overlapping placements are an error.
 	for _, track := range tl.videoTracks {
@@ -132,6 +147,16 @@ func (tl *Timeline) Validate() error {
 		}
 	}
 
+	return nil
+}
+
+// validateSources returns the first source problem on a track, if any.
+func validateSources(trackName string, entries []Placement) error {
+	for _, e := range entries {
+		if err := clip.SourceProblem(e.Clip); err != nil {
+			return fmt.Errorf("track %q: clip at %.3fs: %w", trackName, e.StartAt.Seconds(), err)
+		}
+	}
 	return nil
 }
 
