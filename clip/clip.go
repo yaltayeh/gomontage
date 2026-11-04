@@ -136,6 +136,14 @@ type Base struct {
 	width      int
 	height     int
 	effects    []effects.Effect
+
+	// sourceDuration is the probed length of the source file (0 = unknown,
+	// e.g. images or clips built with New*WithDuration).
+	sourceDuration time.Duration
+	// sourceErr is the error from probing the source file, if any. The
+	// New* constructors record it instead of failing; Timeline.Validate
+	// reports it via SourceProblem.
+	sourceErr error
 }
 
 // ClipType implements Clip.

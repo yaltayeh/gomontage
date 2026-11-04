@@ -33,18 +33,26 @@ func NewVideo(path string) *VideoClip {
 	}
 
 	// Probe the file for metadata.
+	// Probe errors are recorded, not returned (this constructor can't fail);
+	// Timeline.Validate reports them. Use LoadVideo to get the error here.
 	info, err := engine.Probe(path)
-	if err == nil {
-		c.duration = info.Duration
-		c.trimEnd = info.Duration
-		c.hasAudio = info.HasAudio()
-		if len(info.VideoStreams) > 0 {
-			c.width = info.VideoStreams[0].Width
-			c.height = info.VideoStreams[0].Height
-		}
+	if err != nil {
+		c.sourceErr = err
+		return c
 	}
-
+	c.applyVideoInfo(info)
 	return c
+}
+
+func (c *VideoClip) applyVideoInfo(info *engine.MediaInfo) {
+	c.duration = info.Duration
+	c.trimEnd = info.Duration
+	c.sourceDuration = info.Duration
+	c.hasAudio = info.HasAudio()
+	if len(info.VideoStreams) > 0 {
+		c.width = info.VideoStreams[0].Width
+		c.height = info.VideoStreams[0].Height
+	}
 }
 
 // NewVideoWithDuration creates a VideoClip with a manually specified duration,

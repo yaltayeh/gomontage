@@ -31,12 +31,16 @@ func NewAudio(path string) *AudioClip {
 	}
 
 	// Probe the file for metadata.
+	// Probe errors are recorded, not returned (this constructor can't fail);
+	// Timeline.Validate reports them. Use LoadAudio to get the error here.
 	info, err := engine.Probe(path)
-	if err == nil {
-		c.duration = info.Duration
-		c.trimEnd = info.Duration
+	if err != nil {
+		c.sourceErr = err
+		return c
 	}
-
+	c.duration = info.Duration
+	c.trimEnd = info.Duration
+	c.sourceDuration = info.Duration
 	return c
 }
 

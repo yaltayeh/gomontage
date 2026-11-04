@@ -486,14 +486,76 @@ func TestKnownBug_8_SpeedUpAudioDrift(t *testing.T) {
 	})
 }
 
-// Bug 9: probe errors are swallowed and trims are not bounds-checked.
-// The clip constructors have no error return, so the earliest place an error
-// can surface without an API change is Timeline.Validate (also called by
-// Compile). Suggested library change: clip.LoadVideo/LoadAudio returning
-// (clip, error), and/or Validate checking each source exists and that
-// TrimEnd <= probed source duration.
+// Bug 9 (fixed): clip.LoadVideo/LoadAudio/LoadImage return real errors, and
+// Timeline.Validate (also run by Compile/Export) reports missing sources
+// recorded by NewVideo/NewAudio and trims/durations past the source end.
 func TestKnownBug_9_ProbeErrorsSwallowed(t *testing.T) {
-	knownBug(t, 9, "missing files become 0s clips; trims past source end are accepted")
+	requireFFmpeg(t)
+
+	t.Run("load_functions", func(t *testing.T) {
+		dir := t.TempDir()
+		missing := filepath.Join(dir, "missing.mp4")
+		garbage := filepath.Join(dir, "garbage.mp4")
+		if err := os.WriteFile(garbage, []byte("not a video"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		videoOnly := genVideo(t, VideoSpec{Dur: time.Second})
+		tone := genTone(t, 440, time.Second)
+		png := genOpaquePNG(t, 32, 18, "0x0000FF")
+
+		for _, tc := range []struct {
+			name    string
+			load    func() error
+			wantErr string // "" = success
+		}{
+			{"video_missing", func() error { _, e := clip.LoadVideo(missing); return e }, "file not found"},
+			{"video_garbage", func() error { _, e := clip.LoadVideo(garbage); return e }, "cannot read media"},
+			{"video_from_audio_file", func() error { _, e := clip.LoadVideo(tone); return e }, "no video stream"},
+			{"video_ok", func() error { _, e := clip.LoadVideo(videoOnly); return e }, ""},
+			{"audio_missing", func() error { _, e := clip.LoadAudio(missing); return e }, "file not found"},
+			{"audio_from_silent_video", func() error { _, e := clip.LoadAudio(videoOnly); return e }, "no audio stream"},
+			{"audio_ok", func() error { _, e := clip.LoadAudio(tone); return e }, ""},
+			{"image_missing", func() error { _, e := clip.LoadImage(missing); return e }, "file not found"},
+			{"image_garbage", func() error { _, e := clip.LoadImage(garbage); return e }, "cannot read media"},
+			{"image_ok", func() error { _, e := clip.LoadImage(png); return e }, ""},
+		} {
+			err := tc.load()
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Errorf("%s: unexpected error %v", tc.name, err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Errorf("%s: error = %v, want it to contain %q", tc.name, err, tc.wantErr)
+			}
+		}
+
+		v, err := clip.LoadVideo(genVideo(t, VideoSpec{ToneHz: 440, Dur: 2 * time.Second}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !v.HasAudio() || v.Width() != W {
+			t.Errorf("LoadVideo metadata: hasAudio=%v width=%d", v.HasAudio(), v.Width())
+		}
+		assertDuration(t, "LoadVideo", v.Duration(), 2*time.Second, 30)
+	})
+
+	t.Run("export_reports_missing_file", func(t *testing.T) {
+		missing := filepath.Join(t.TempDir(), "gone.mp4")
+		tl := newTL()
+		tl.AddVideoTrack("main").Add(clip.NewVideo(missing), 0)
+		err := tl.ExportSilent(testProfile(), filepath.Join(t.TempDir(), "x.mp4"))
+		if err == nil || !strings.Contains(err.Error(), "file not found") || !strings.Contains(err.Error(), `track "main"`) {
+			t.Errorf("export error = %v, want a validation error naming the track and missing file", err)
+		}
+	})
+
+	t.Run("trim_within_source_ok", func(t *testing.T) {
+		src := genVideo(t, VideoSpec{Dur: 2 * time.Second})
+		tl := newTL()
+		tl.AddVideoTrack("v").Add(clip.NewVideo(src).Trim(500*time.Millisecond, 2*time.Second), 0)
+		if err := tl.Validate(); err != nil {
+			t.Errorf("Validate() = %v for a trim inside the source", err)
+		}
+	})
 
 	t.Run("missing_video_file", func(t *testing.T) {
 		missing := filepath.Join(t.TempDir(), "does-not-exist.mp4")
