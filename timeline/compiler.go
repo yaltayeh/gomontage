@@ -807,6 +807,31 @@ func (c *Compiler) compileAudioFromVideoEntry(entry Placement) (string, error) {
 		currentLabel, lastNode = c.compileAudioEffect(e, currentLabel, lastNode, "vafx")
 	}
 
+	// Apply the clip's fade in/out to its embedded audio, matching the
+	// visual fade. This runs last so the fade-out start (computed from the
+	// clip's output Duration) is in output time even after speed changes.
+	if cl.FadeInDuration() > 0 {
+		fadeNode := c.graph.AddFilter("afade", map[string]string{
+			"t":  "in",
+			"st": "0",
+			"d":  formatSeconds(cl.FadeInDuration()),
+		})
+		fadeLabel := c.nextLabelFor("vafin", fadeNode)
+		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamAudio)
+		currentLabel = fadeLabel
+		lastNode = fadeNode
+	}
+	if cl.FadeOutDuration() > 0 {
+		fadeNode := c.graph.AddFilter("afade", map[string]string{
+			"t":  "out",
+			"st": formatSeconds(cl.Duration() - cl.FadeOutDuration()),
+			"d":  formatSeconds(cl.FadeOutDuration()),
+		})
+		fadeLabel := c.nextLabelFor("vafout", fadeNode)
+		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamAudio)
+		currentLabel = fadeLabel
+	}
+
 	return currentLabel, nil
 }
 

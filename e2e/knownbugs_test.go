@@ -390,10 +390,10 @@ func TestKnownBug_6_ProfileResolutionIgnored(t *testing.T) {
 	})
 }
 
-// Bug 7: compileAudioFromVideoEntry applies trim, volume and effects but not
-// the clip's fadeIn/fadeOut, so embedded audio never fades.
+// Bug 7 (fixed): compileAudioFromVideoEntry now applies the clip's
+// fadeIn/fadeOut to embedded audio, not just to the picture.
 func TestKnownBug_7_EmbeddedAudioIgnoresFades(t *testing.T) {
-	knownBug(t, 7, "VideoClip.WithFadeIn/WithFadeOut don't fade embedded audio")
+	requireFFmpeg(t)
 
 	src := genVideo(t, VideoSpec{Color: "0xFF0000", ToneHz: 440, Dur: 3 * time.Second})
 	tl := newTL()
@@ -408,6 +408,23 @@ func TestKnownBug_7_EmbeddedAudioIgnoresFades(t *testing.T) {
 	}
 	if mid.MeanDB-end.MeanDB < 12 {
 		t.Errorf("audio fade-out: end %.1f dB vs middle %.1f dB, want ≥12 dB quieter", end.MeanDB, mid.MeanDB)
+	}
+
+	// In a sequence (concat path), with a trimmed second clip.
+	seq := newTL()
+	seq.AddVideoTrack("v").AddSequence(
+		clip.NewVideo(src).Trim(0, time.Second),
+		clip.NewVideo(src).Trim(500*time.Millisecond, 2500*time.Millisecond).WithFadeIn(time.Second),
+	)
+	seqOut := renderMP4(t, seq)
+	first := audioLevel(t, seqOut, 200*time.Millisecond, 600*time.Millisecond)
+	secondStart := audioLevel(t, seqOut, time.Second, 150*time.Millisecond)
+	secondLate := audioLevel(t, seqOut, 2300*time.Millisecond, 500*time.Millisecond)
+	if first.MeanDB-secondStart.MeanDB < 12 {
+		t.Errorf("sequence: second clip start %.1f dB vs first clip %.1f dB, want ≥12 dB quieter", secondStart.MeanDB, first.MeanDB)
+	}
+	if d := first.MeanDB - secondLate.MeanDB; d > 2 || d < -2 {
+		t.Errorf("sequence: second clip after fade %.1f dB, want ≈ first clip %.1f dB", secondLate.MeanDB, first.MeanDB)
 	}
 }
 
