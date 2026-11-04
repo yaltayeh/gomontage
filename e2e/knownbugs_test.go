@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"fmt"
+	"image"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -114,17 +115,27 @@ func TestKnownBug_2_PositionAndSizeIgnored(t *testing.T) {
 
 	t.Run("text_style_position", func(t *testing.T) {
 		requireFilter(t, "drawtext")
-		tl := newTL()
+		// Text over a base video, so this tests positioning on its own (a
+		// text-only timeline would hit bug #4 instead). We look for white
+		// glyph pixels rather than background color, so the opaque text
+		// background of bug #1 doesn't affect the result.
+		tl := redBase(t)
 		style := clip.DefaultTextStyle()
 		style.Size = 40
 		style.Color = "#FFFFFF"
 		style.BorderWidth = 0
 		style.Position = clip.Position{X: 200, Y: 120}
-		tl.AddVideoTrack("t").Add(clip.NewText("MMMM", style).WithDuration(time.Second), 0)
+		tl.AddVideoTrack("t").Add(clip.NewText("MMMM", style).WithDuration(3*time.Second), 0)
 		out := renderMP4(t, tl)
 
-		// Today the text lands at (0,0). Top-left must be empty.
-		assertPixel(t, out, 500*time.Millisecond, 10, 10, Black, colorTol)
+		img := frameAt(t, out, time.Second)
+		white := RGB{255, 255, 255}
+		if n := countNear(img, image.Rect(0, 0, 120, 60), white, 60); n > 0 {
+			t.Errorf("found %d white text pixels in the top-left corner; text should be at (200,120)", n)
+		}
+		if n := countNear(img, image.Rect(200, 120, W, H), white, 60); n == 0 {
+			t.Errorf("no white text pixels at/after (200,120)")
+		}
 	})
 }
 

@@ -429,6 +429,21 @@ func assertPixel(t *testing.T, path string, ts time.Duration, x, y int, want RGB
 	}
 }
 
+// countNear counts pixels inside r whose color is within tol of want.
+func countNear(img image.Image, r image.Rectangle, want RGB, tol int) int {
+	r = r.Intersect(img.Bounds())
+	n := 0
+	for y := r.Min.Y; y < r.Max.Y; y++ {
+		for x := r.Min.X; x < r.Max.X; x++ {
+			cr, cg, cb, _ := img.At(x, y).RGBA()
+			if colorClose(RGB{int(cr >> 8), int(cg >> 8), int(cb >> 8)}, want, tol) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // ---------------------------------------------------------------------------
 // Audio helpers
 // ---------------------------------------------------------------------------
