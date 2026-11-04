@@ -491,6 +491,19 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		lastNode = filterNode
 	}
 
+	// Normalize the frame rate to the timeline FPS. This runs last so that
+	// speed effects (setpts) are also resampled to the timeline rate. It also
+	// gives every clip the same 1/FPS timebase, which concat needs when the
+	// sources have different frame rates.
+	if cfg.FPS > 0 {
+		fpsNode := c.graph.AddFilter("fps", map[string]string{
+			"fps": fmt.Sprintf("%g", cfg.FPS),
+		})
+		fpsLabel := c.nextLabelFor("vfps", fpsNode)
+		c.graph.Connect(lastNode, fpsNode, currentLabel, engine.StreamVideo)
+		currentLabel = fpsLabel
+	}
+
 	return []clipLabel{{
 		video: currentLabel,
 		entry: entry,

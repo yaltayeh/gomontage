@@ -288,9 +288,11 @@ func TestKnownBug_4_GeneratedOnlyTimeline(t *testing.T) {
 	})
 }
 
-// Bug 5: the timeline FPS is not applied to file clips (no fps filter / -r).
+// Bug 5 (fixed): every video clip is normalized to the timeline FPS with an
+// fps filter, including mixed-fps sequences (which used to crash mpeg4 with
+// a 1/1000000 timebase).
 func TestKnownBug_5_TimelineFPSIgnored(t *testing.T) {
-	knownBug(t, 5, "timeline FPS is not applied to file-backed clips")
+	requireFFmpeg(t)
 
 	for _, srcFPS := range []int{24, 60} {
 		t.Run(fmt.Sprintf("%dfps_source", srcFPS), func(t *testing.T) {
@@ -312,10 +314,17 @@ func TestKnownBug_5_TimelineFPSIgnored(t *testing.T) {
 		b := genVideo(t, VideoSpec{FPS: 60, Dur: time.Second, Color: "0x0000FF"})
 		tl := newTL()
 		tl.AddVideoTrack("v").AddSequence(clip.NewVideo(a), clip.NewVideo(b))
-		v := probe(t, renderMP4(t, tl)).Video()
+		out := renderMP4(t, tl)
+		v := probe(t, out).Video()
 		if v.FPS < 29.9 || v.FPS > 30.1 {
 			t.Errorf("output fps = %.3f, want 30", v.FPS)
 		}
+		if v.Frames < 58 || v.Frames > 62 {
+			t.Errorf("output frames = %d, want ≈60 for 2s @30fps", v.Frames)
+		}
+		assertDuration(t, "video", v.Duration, 2*time.Second, 30)
+		assertPixel(t, out, 500*time.Millisecond, cx, cy, Red, colorTol)
+		assertPixel(t, out, 1500*time.Millisecond, cx, cy, Blue, colorTol)
 	})
 }
 
