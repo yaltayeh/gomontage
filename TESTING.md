@@ -45,16 +45,20 @@ make test-e2e-bugs
 When a bug is fixed, delete the `knownBug(...)` line at the top of its test so
 it becomes a permanent regression test.
 
-| # | Bug |
-|---|---|
-| 1 | Overlay tracks are opaque black outside their content (gaps, tail, pad, text background) |
-| 2 | `WithPosition` / `WithSize` / `TextStyle.Position` are ignored |
-| 3 | `drawtext` text is not escaped |
-| 4 | A timeline with only generated clips fails ("graph has no inputs") |
-| 5 | Timeline FPS is not applied to file clips |
-| 6 | `Profile.Width/Height` are ignored |
-| 7 | Embedded audio of video clips ignores clip fades |
-| 8 | `SpeedUp` retimes video only; audio drifts |
-| 9 | Missing files / trims past source end are not reported |
-| 10 | Audio-only profiles fail on timelines with video; GIF fails with audio |
-| 11 | Reusing one image with different durations truncates the output |
+| # | Bug | Status |
+|---|---|---|
+| 1 | Overlay tracks are opaque black outside their content (gaps, tail, pad, text background) | open |
+| 2 | `WithPosition` / `WithSize` / `TextStyle.Position` are ignored | open |
+| 3 | `drawtext` text is not escaped | fixed |
+| 4 | A timeline with only generated clips fails ("graph has no inputs") | fixed |
+| 5 | Timeline FPS is not applied to file clips | fixed |
+| 6 | `Profile.Width/Height` are ignored | fixed |
+| 7 | Embedded audio of video clips ignores clip fades | fixed |
+| 8 | `SpeedUp` retimes video only; audio drifts | fixed |
+| 9 | Missing files / trims past source end are not reported | fixed |
+| 10 | Audio-only profiles fail on timelines with video; GIF fails with audio | fixed |
+| 11 | Reusing one image with different durations truncates the output | fixed |
+| 12 | Fades on sped-up clips are applied in source time (wrong place) | open |
+
+Fixed bugs keep their `TestKnownBug_<N>_*` test, which now runs in the
+default mode as a regression test.
