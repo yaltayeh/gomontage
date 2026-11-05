@@ -2,31 +2,59 @@
   "$schema": "../schema/project.v1.schema.json",
   "version": 1,
   "name": "Podcast episode 12",
-  "format": { "width": 1920, "height": 1080, "fps": 30 },
+  "format": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
   "media": [
     {
       "id": "m_jingle",
       "kind": "audio",
       "path": "audio/jingle.wav",
-      "probe": { "duration_ms": 8000, "has_audio": true, "sample_rate": 48000, "channels": 2 }
+      "probe": {
+        "duration_ms": 8000,
+        "has_audio": true,
+        "sample_rate": 48000,
+        "channels": 2
+      }
     },
     {
       "id": "m_host",
       "kind": "audio",
       "path": "audio/host-take2.wav",
-      "probe": { "duration_ms": 1820000, "has_audio": true, "sample_rate": 48000, "channels": 1 }
+      "probe": {
+        "duration_ms": 1820000,
+        "has_audio": true,
+        "sample_rate": 48000,
+        "channels": 1
+      }
     },
     {
       "id": "m_guest_call",
       "kind": "video",
       "path": "recordings/guest-call.mp4",
-      "probe": { "duration_ms": 1650000, "has_video": true, "has_audio": true, "width": 1280, "height": 720, "fps": 30, "sample_rate": 48000, "channels": 2 }
+      "probe": {
+        "duration_ms": 1650000,
+        "has_video": true,
+        "has_audio": true,
+        "width": 1280,
+        "height": 720,
+        "fps": 30,
+        "sample_rate": 48000,
+        "channels": 2
+      }
     },
     {
       "id": "m_bed",
       "kind": "audio",
       "path": "audio/music-bed.mp3",
-      "probe": { "duration_ms": 240000, "has_audio": true, "sample_rate": 44100, "channels": 2 }
+      "probe": {
+        "duration_ms": 240000,
+        "has_audio": true,
+        "sample_rate": 44100,
+        "channels": 2
+      }
     }
   ],
   "tracks": [
@@ -35,8 +63,19 @@
       "kind": "audio",
       "name": "jingle",
       "clips": [
-        { "id": "c_jingle_open", "type": "audio", "media": "m_jingle", "at_ms": 0 },
-        { "id": "c_jingle_close", "type": "audio", "media": "m_jingle", "at_ms": 1208000, "fade_out_ms": 2000 }
+        {
+          "id": "c_jingle_open",
+          "type": "audio",
+          "media": "m_jingle",
+          "at_ms": 0
+        },
+        {
+          "id": "c_jingle_close",
+          "type": "audio",
+          "media": "m_jingle",
+          "at_ms": 1208000,
+          "fade_out_ms": 2000
+        }
       ]
     },
     {
@@ -51,7 +90,12 @@
           "at_ms": 6000,
           "in_ms": 4500,
           "out_ms": 1206500,
-          "effects": [{ "type": "normalize", "target_lufs": -16 }]
+          "effects": [
+            {
+              "type": "normalize",
+              "target_lufs": -16
+            }
+          ]
         },
         {
           "id": "c_guest",
@@ -61,7 +105,12 @@
           "at_ms": 6000,
           "in_ms": 1000,
           "out_ms": 1201000,
-          "effects": [{ "type": "normalize" }, { "type": "volume", "gain": 1.2 }]
+          "volume": 1.2,
+          "effects": [
+            {
+              "type": "normalize"
+            }
+          ]
         }
       ]
     },
@@ -71,10 +120,24 @@
       "name": "music bed",
       "enabled": false,
       "clips": [
-        { "id": "c_bed", "type": "audio", "media": "m_bed", "at_ms": 0, "out_ms": 60000, "fade_out_ms": 5000, "effects": [{ "type": "volume", "gain": 0.15 }] }
+        {
+          "id": "c_bed",
+          "type": "audio",
+          "media": "m_bed",
+          "at_ms": 0,
+          "out_ms": 60000,
+          "fade_out_ms": 5000,
+          "volume": 0.15
+        }
       ]
     }
   ],
-  "output": { "preset": "wav", "path": "output/episode-12.wav" },
-  "meta": { "episode": 12, "notes": "Music bed disabled until licensing is confirmed." }
+  "output": {
+    "preset": "wav",
+    "path": "output/episode-12.wav"
+  },
+  "meta": {
+    "episode": 12,
+    "notes": "Music bed disabled until licensing is confirmed."
+  }
 }

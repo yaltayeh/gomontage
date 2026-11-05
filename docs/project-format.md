@@ -169,6 +169,7 @@ fields that don't belong to the type (e.g. `duration_ms` on a `video` clip,
 | `in_ms` | int ≥ 0 | no | `0` | Start of the window in the source. |
 | `out_ms` | int ≥ 1 | no | source end | End of the window (exclusive). `in_ms < out_ms ≤ probe.duration_ms`. |
 | `include_audio` | bool | no | `true` | Play the file's sound with the picture. Ignored if the media has no audio. |
+| `volume` | number 0–10 | no | `1` | Loudness of the clip's sound, linear (see [§6.9](#69-volume)). |
 | `effects` | [Effects](#10-effects) | no | `[]` | |
 | `position`, `anchor`, `size` | [Layout](#7-layout-position-anchor-size) | no | centred, full canvas, contain | |
 
@@ -178,6 +179,7 @@ fields that don't belong to the type (e.g. `duration_ms` on a `video` clip,
 |---|---|---|---|---|
 | `media` | ID | **yes** | | Media of kind `audio`, or kind `video` with `probe.has_audio: true` (its sound is used, the picture is ignored). |
 | `in_ms`, `out_ms` | | | | As for `video` clips. |
+| `volume` | number 0–10 | no | `1` | Loudness, linear (see [§6.9](#69-volume)). |
 | `effects` | [Effects](#10-effects) | no | `[]` | |
 
 ### 6.4 `image` — a still picture (video tracks only)
@@ -237,6 +239,16 @@ library's `effects.FadeIn/FadeOut/AudioFadeIn/AudioFadeOut` are not exposed).
 
 Go API: `WithFadeIn/WithFadeOut` on every clip type (the compiler applies them to
 picture and embedded sound, after effects — fixed in known bugs #7 and #12).
+
+### 6.9 Volume
+
+`volume` is a clip field on `video` and `audio` clips (the clips that can make
+sound), next to the fade fields. It is a **linear** multiplier: `1` (default)
+unchanged, `0.5` ≈ −6 dB, `2` ≈ +6 dB, `0` silent; range 0–10. It is the only
+way to change a clip's loudness — there is no volume effect. Fades are applied
+on top of it.
+
+Go API: `WithVolume(volume)` on `VideoClip` / `AudioClip`.
 
 ---
 
@@ -344,7 +356,7 @@ Go API: **none yet** — see [Known gaps](#14-known-gaps-and-loader-behavior).
 ```json
 "effects": [
   { "type": "speed", "factor": 0.5, "affect_audio": false },
-  { "type": "volume", "gain": 0.4 }
+  { "type": "normalize", "target_lufs": -16 }
 ]
 ```
 
@@ -358,11 +370,11 @@ and `audio` clips only. They are applied in list order.
 | Type | Params | Description | Go API |
 |---|---|---|---|
 | `speed` | `factor` (req, 0.1–10), `affect_audio` (bool, default `true`) | Plays faster (`2`) or slower (`0.5`). Timeline duration = source window / factor. With `affect_audio: true` the sound is retimed too (pitch preserved), keeping sync. With `false` the sound plays at normal speed and is cut at the clip end (or ends early when slowed). Not allowed with `affect_audio: false` on `audio` clips (meaningless). | video clip: `effects.SpeedUp(factor)` (audio follows automatically, fixed in bug #8). `affect_audio:false`: add `effects.AudioSpeed(1)` to suppress the automatic retiming (see gaps). audio clip: `effects.AudioSpeed(factor)`. |
-| `volume` | `gain` (req, 0–10, linear) | Loudness multiplier: 1 unchanged, 0.5 ≈ −6 dB, 0 silent. | `WithVolume(gain)` |
 | `normalize` | `target_lufs` (−70 to −5, default −16) | EBU R128 loudness normalization. | `effects.NormalizeTo(target_lufs)` |
 
 There is no separate audio-speed effect (one way to change speed) and no fade
-effects (fades are clip fields). Volume/normalize on a `video` clip with
+effects (fades are clip fields) and no volume effect (`volume` is a clip
+field, §6.9). `normalize` or `volume ≠ 1` on a `video` clip with
 `include_audio: false` or without sound have no effect; the loader warns.
 
 ---
@@ -424,7 +436,7 @@ at-most-once effects, integer times.
 | L8 | Media file exists at `path`. | warning on load, error on render (so tools can open a project and relink missing media) |
 | L9 | Font `file` exists / font `family` resolves. | error on render |
 | L10 | Fingerprint differs from the file. | warning |
-| L11 | Audio effects on a clip that produces no sound (`include_audio: false`, or media without audio). | warning |
+| L11 | `volume ≠ 1` or a `normalize` effect on a clip that produces no sound (`include_audio: false`, or media without audio). | warning |
 | L12 | At least one enabled clip (for rendering). | error on render |
 | L13 | Features the library can't render yet (§14). | error |
 
@@ -448,6 +460,7 @@ Warnings never block loading; the loader returns them alongside the timeline.
 | `text` clip | `clip.NewText(text, clip.TextStyle{…}).WithDuration(d)` |
 | `at_ms` | `track.Add(c, at)` |
 | `fade_in_ms` / `fade_out_ms` | `.WithFadeIn(d)` / `.WithFadeOut(d)` |
+| `volume` | `.WithVolume(v)` (only when ≠ 1) |
 | effects | §10 table |
 | `output.preset` | §11 table; render with `tl.Export(profile, path)` |
 | ms → Go | `time.Duration(ms) * time.Millisecond` (exact) |
@@ -515,7 +528,7 @@ will be rejected with the errors above until those gaps close.
   `RationalTime(in_ms, 1000)…`; gaps → `Gap` items (OTIO tracks are
   sequential, so `at_ms` positions become gaps); `transition_in` →
   `Transition` with `in_offset + out_offset = duration_ms` (e.g. half each, cutting in the middle of our overlap);
-  `speed` → `LinearTimeWarp`; `volume`/`normalize` → effects with metadata;
+  `speed` → `LinearTimeWarp`; `volume`/`normalize` → effects/metadata;
   layout → metadata (no OTIO equivalent). Millisecond times convert exactly to
   `RationalTime(ms, 1000)`.
 
@@ -526,6 +539,6 @@ will be rejected with the errors above until those gaps close.
 | File | Shows | Renders today? |
 |---|---|---|
 | [`simple-trim-concat.json`](../examples/simple-trim-concat.json) | Trim + back-to-back sequence, fades, fingerprint | yes |
-| [`reel-arabic-overlay.json`](../examples/reel-arabic-overlay.json) | 9:16 reel, Arabic text with box, logo overlay, music with volume, `cover` | no (§14) |
+| [`reel-arabic-overlay.json`](../examples/reel-arabic-overlay.json) | 9:16 reel, Arabic text with box, logo overlay, music with `volume`, `cover` | no (§14) |
 | [`podcast-audio.json`](../examples/podcast-audio.json) | Audio-only WAV, sound from a video file, normalize, disabled track, `meta` | yes |
-| [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades, color clip, normalize + volume | no (§14) |
+| [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades (video and audio tracks), color clip, normalize + `volume` | no (§14) |

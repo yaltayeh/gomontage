@@ -73,7 +73,7 @@ const minimal = `{
       {"id": "c1", "type": "video", "media": "m1", "at_ms": 0, "effects": [{"type": "speed", "factor": 2}]}
     ]},
     {"id": "t2", "kind": "audio", "clips": [
-      {"id": "c2", "type": "audio", "media": "m2", "at_ms": 0}
+      {"id": "c2", "type": "audio", "media": "m2", "at_ms": 0, "volume": 0.5}
     ]}
   ]
 }`
@@ -151,11 +151,19 @@ func invalidCases() []invalidCase {
 			clip0(p)["effects"] = []any{map[string]any{"type": "speed", "factor": 50}}
 		}, "/factor"},
 		{"unknown effect param", func(p map[string]any) {
-			clip0(p)["effects"] = []any{map[string]any{"type": "volume", "gain": 1, "db": 3}}
+			clip0(p)["effects"] = []any{map[string]any{"type": "normalize", "db": 3}}
 		}, "db"},
 		{"param of another effect type", func(p map[string]any) {
-			clip0(p)["effects"] = []any{map[string]any{"type": "volume", "gain": 1, "factor": 2}}
+			clip0(p)["effects"] = []any{map[string]any{"type": "normalize", "factor": 2}}
 		}, "factor"},
+		{"volume as an effect (it is a clip field)", func(p map[string]any) {
+			clip0(p)["effects"] = []any{map[string]any{"type": "volume", "gain": 0.5}}
+		}, "/effects/0/type"},
+		{"volume out of range", func(p map[string]any) { clip0(p)["volume"] = 11 }, "/volume"},
+		{"volume on a text clip", func(p map[string]any) {
+			tr := p["tracks"].([]any)[0].(map[string]any)
+			tr["clips"] = []any{map[string]any{"id": "x", "type": "text", "text": "hi", "at_ms": 0, "duration_ms": 1000, "volume": 0.5}}
+		}, "volume"},
 		{"duplicate effect type", func(p map[string]any) {
 			clip0(p)["effects"] = []any{
 				map[string]any{"type": "speed", "factor": 2},

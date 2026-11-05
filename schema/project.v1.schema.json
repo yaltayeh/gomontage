@@ -589,17 +589,6 @@
           "contains": {
             "properties": {
               "type": {
-                "const": "volume"
-              }
-            }
-          },
-          "minContains": 0,
-          "maxContains": 1
-        },
-        {
-          "contains": {
-            "properties": {
-              "type": {
                 "const": "normalize"
               }
             }
@@ -610,17 +599,16 @@
       ]
     },
     "effect": {
-      "description": "One effect. \"speed\" changes playback speed (picture and sound), \"volume\" scales the loudness, \"normalize\" evens out loudness to a target.",
+      "description": "One effect. \"speed\" changes playback speed (picture and sound), \"normalize\" evens out loudness to a target. (Volume is the clip field \"volume\", not an effect.)",
       "type": "object",
       "required": [
         "type"
       ],
       "properties": {
         "type": {
-          "description": "Effect type: \"speed\", \"volume\" or \"normalize\".",
+          "description": "Effect type: \"speed\" or \"normalize\".",
           "enum": [
             "speed",
-            "volume",
             "normalize"
           ]
         }
@@ -636,18 +624,6 @@
           },
           "then": {
             "$ref": "#/$defs/speedEffect"
-          }
-        },
-        {
-          "if": {
-            "properties": {
-              "type": {
-                "const": "volume"
-              }
-            }
-          },
-          "then": {
-            "$ref": "#/$defs/volumeEffect"
           }
         },
         {
@@ -685,25 +661,6 @@
           "description": "Whether the sound is retimed along with the picture. true (default): sound follows the picture, pitch preserved. false: sound plays at normal speed and is cut off at the end of the clip (or ends early when slowed down).",
           "type": "boolean",
           "default": true
-        }
-      }
-    },
-    "volumeEffect": {
-      "description": "Scales the clip's loudness.",
-      "type": "object",
-      "required": [
-        "gain"
-      ],
-      "additionalProperties": false,
-      "properties": {
-        "type": {
-          "description": "Effect type (see effect.type)."
-        },
-        "gain": {
-          "description": "Linear volume multiplier: 1 = unchanged, 0.5 = half (about -6 dB), 2 = double (about +6 dB), 0 = silent. Range 0-10.",
-          "type": "number",
-          "minimum": 0,
-          "maximum": 10
         }
       }
     },
@@ -900,6 +857,9 @@
         "fade_out_ms": {
           "$ref": "#/$defs/fadeOutMs"
         },
+        "volume": {
+          "$ref": "#/$defs/volume"
+        },
         "media": {
           "description": "ID of the media entry to play; must be media of kind \"video\".",
           "$ref": "#/$defs/id"
@@ -955,6 +915,9 @@
         },
         "fade_out_ms": {
           "$ref": "#/$defs/fadeOutMs"
+        },
+        "volume": {
+          "$ref": "#/$defs/volume"
         },
         "media": {
           "description": "ID of the media entry whose sound is played: media of kind \"audio\", or of kind \"video\" with probe.has_audio true.",
@@ -1121,6 +1084,13 @@
           "$ref": "#/$defs/size"
         }
       }
+    },
+    "volume": {
+      "description": "Loudness of the clip's sound as a linear multiplier: 1 = unchanged (default), 0.5 = half (about -6 dB), 2 = double (about +6 dB), 0 = silent. Range 0-10. Applies to the sound only, like fades it is a basic clip property.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "default": 1
     }
   }
 }
