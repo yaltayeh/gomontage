@@ -21,8 +21,12 @@ Get started:
   gomontage init my-project    Create a new project
   gomontage run                Run the project's main.go
   gomontage probe video.mp4    Inspect a media file
+  gomontage render p.gomontage.json    Render a project file
+  gomontage validate p.gomontage.json  Check a project file
   gomontage docs               Generate API documentation`,
 		Version: gomontage.Version,
+		// Errors are printed once, by main, to stderr.
+		SilenceErrors: true,
 	}
 
 	rootCmd.AddCommand(
@@ -30,11 +34,12 @@ Get started:
 		runCmd(),
 		probeCmd(),
 		validateCmd(),
+		renderCmd(),
 		docsCmd(),
 	)
 
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, "Error:", err)
 		os.Exit(1)
 	}
 }

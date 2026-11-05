@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +77,7 @@ func TestCommandsRegistered(t *testing.T) {
 		{"run", runCmd},
 		{"probe", probeCmd},
 		{"validate", validateCmd},
+		{"render", renderCmd},
 		{"docs", docsCmd},
 	}
 
@@ -120,5 +124,67 @@ func TestProbeCommandRequiresArg(t *testing.T) {
 	err := cmd.Args(cmd, []string{})
 	if err == nil {
 		t.Error("expected probe command to reject zero arguments")
+	}
+}
+
+func runValidate(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	cmd := validateCmd()
+	var out strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestValidateProjectFile_LoaderError(t *testing.T) {
+	out, err := runValidate(t, "../../schema/testdata/loader/transition-first-clip.json")
+	if err == nil {
+		t.Fatal("expected an error exit")
+	}
+	want := `error: /tracks/0/clips/0: clip "c1": transition_in on the first clip of track "t_main" (there is no previous clip)`
+	if !strings.Contains(out, want) || !strings.Contains(out, ": 1 error, 0 warnings") {
+		t.Errorf("output:\n%s", out)
+	}
+}
+
+func TestValidateProjectFile_RenderErrorsAndNoDuplicateWarnings(t *testing.T) {
+	out, err := runValidate(t, "../../examples/simple-trim-concat.json")
+	if err == nil {
+		t.Fatal("expected an error exit (media files are missing)")
+	}
+	if !strings.Contains(out, `error: /media/0: media "m_intro": file not found: media/intro.mp4`) {
+		t.Errorf("missing render error:\n%s", out)
+	}
+	if strings.Contains(out, "warning:") || !strings.Contains(out, ": 3 errors, 0 warnings") {
+		t.Errorf("missing-file problems must be reported once:\n%s", out)
+	}
+}
+
+func TestValidateProjectFile_Valid(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p.gomontage.json")
+	data := `{"version": 1, "format": {"width": 320, "height": 180, "fps": 30}, "media": [],
+	  "tracks": [{"id": "t1", "kind": "video", "clips": [{"id": "c1", "type": "color", "color": "#FF0000", "at_ms": 0, "duration_ms": 1000}]}],
+	  "output": {"preset": "gif", "path": "out.gif"}}`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runValidate(t, path)
+	if err != nil || out != path+": valid, 0 warnings\n" {
+		t.Errorf("err %v, output %q", err, out)
+	}
+}
+
+func TestValidate_NoArgsKeepsYAMLBehavior(t *testing.T) {
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	defer os.Chdir(wd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runValidate(t); err == nil || !strings.Contains(err.Error(), "gomontage.yaml") {
+		t.Errorf("no-arg validate without gomontage.yaml: err = %v", err)
 	}
 }
