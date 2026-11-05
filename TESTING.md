@@ -5,7 +5,7 @@ There are two layers of tests.
 | Suite | Command | Needs FFmpeg | What it checks |
 |---|---|---|---|
 | Unit | `go test ./...` or `make test` | No | Graph/command shape, clip/timeline logic |
-| Project schema | `go test ./schema/` (part of `go test ./...`) | No | `schema/project.v1.schema.json` compiles, every file in `examples/` validates, and invalid projects are rejected with useful errors |
+| Project schema | `go test ./schema/` (part of `go test ./...`) | No | `schema/project.v1.schema.json` compiles, every file in `examples/` validates, invalid projects are rejected with useful errors, and the loader-level fixtures in `schema/testdata/loader/` are schema-valid and declare their expected loader error |
 | End-to-end | `go test -tags e2e ./e2e/...` or `make test-e2e` | Yes | Real renders: durations, pixel colors, audio levels, codecs |
 
 ## End-to-end suite (`e2e/`)

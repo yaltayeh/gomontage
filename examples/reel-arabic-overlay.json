@@ -2,25 +2,46 @@
   "$schema": "../schema/project.v1.schema.json",
   "version": 1,
   "name": "Coming soon reel",
-  "format": { "width": 1080, "height": 1920, "fps": 30 },
+  "format": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30
+  },
   "media": [
     {
       "id": "m_broll",
       "kind": "video",
       "path": "media/street.mov",
-      "probe": { "duration_ms": 17120, "has_video": true, "has_audio": true, "width": 2160, "height": 3840, "fps": 59.94, "sample_rate": 44100, "channels": 2 }
+      "probe": {
+        "duration_ms": 17120,
+        "has_video": true,
+        "has_audio": true,
+        "width": 2160,
+        "height": 3840,
+        "fps": 59.94,
+        "sample_rate": 44100,
+        "channels": 2
+      }
     },
     {
       "id": "m_logo",
       "kind": "image",
       "path": "brand/logo.png",
-      "probe": { "width": 800, "height": 800 }
+      "probe": {
+        "width": 800,
+        "height": 800
+      }
     },
     {
       "id": "m_music",
       "kind": "audio",
       "path": "media/music.mp3",
-      "probe": { "duration_ms": 95000, "has_audio": true, "sample_rate": 44100, "channels": 2 }
+      "probe": {
+        "duration_ms": 95000,
+        "has_audio": true,
+        "sample_rate": 44100,
+        "channels": 2
+      }
     }
   ],
   "tracks": [
@@ -37,7 +58,11 @@
           "in_ms": 2000,
           "out_ms": 14000,
           "include_audio": false,
-          "size": { "width": 1, "height": 1, "fit": "cover" },
+          "size": {
+            "width": 1,
+            "height": 1,
+            "fit": "cover"
+          },
           "fade_out_ms": 500
         }
       ]
@@ -53,9 +78,14 @@
           "media": "m_logo",
           "at_ms": 0,
           "duration_ms": 12000,
-          "position": { "x": 0.95, "y": 0.04 },
+          "position": {
+            "x": 0.95,
+            "y": 0.04
+          },
           "anchor": "top-right",
-          "size": { "width": 0.18 },
+          "size": {
+            "width": 0.18
+          },
           "fade_in_ms": 300
         }
       ]
@@ -72,13 +102,21 @@
           "duration_ms": 6000,
           "text": "قريباً",
           "style": {
-            "font": { "family": "Noto Sans Arabic" },
+            "font": {
+              "family": "Noto Sans Arabic"
+            },
             "size": 0.07,
             "color": "#FFFFFF",
-            "box": { "color": "#000000AA", "padding": 0.3 },
+            "box": {
+              "color": "#000000AA",
+              "padding": 0.3
+            },
             "direction": "auto"
           },
-          "position": { "x": 0.5, "y": 0.85 },
+          "position": {
+            "x": 0.5,
+            "y": 0.85
+          },
           "anchor": "bottom",
           "fade_in_ms": 400,
           "fade_out_ms": 400
@@ -90,12 +128,20 @@
           "duration_ms": 4000,
           "text": "١٥ نوفمبر\nNovember 15",
           "style": {
-            "font": { "file": "fonts/NotoSansArabic-Bold.ttf" },
+            "font": {
+              "file": "fonts/NotoSansArabic-Bold.ttf"
+            },
             "size": 0.045,
-            "outline": { "color": "#000000", "width": 0.08 },
+            "outline": {
+              "color": "#000000",
+              "width": 0.08
+            },
             "align": "center"
           },
-          "position": { "x": 0.5, "y": 0.5 },
+          "position": {
+            "x": 0.5,
+            "y": 0.5
+          },
           "fade_in_ms": 300
         }
       ]
@@ -114,10 +160,14 @@
           "out_ms": 12000,
           "fade_in_ms": 1000,
           "fade_out_ms": 2000,
-          "effects": [{ "type": "volume", "gain": 0.6 }]
+          "volume": 0.6
         }
       ]
     }
   ],
-  "output": { "preset": "reel", "path": "output/coming-soon.mp4", "fit": "contain" }
+  "output": {
+    "preset": "reel",
+    "path": "output/coming-soon.mp4",
+    "fit": "contain"
+  }
 }

@@ -73,7 +73,7 @@ const minimal = `{
       {"id": "c1", "type": "video", "media": "m1", "at_ms": 0, "effects": [{"type": "speed", "factor": 2}]}
     ]},
     {"id": "t2", "kind": "audio", "clips": [
-      {"id": "c2", "type": "audio", "media": "m2", "at_ms": 0}
+      {"id": "c2", "type": "audio", "media": "m2", "at_ms": 0, "volume": 0.5}
     ]}
   ]
 }`
@@ -151,11 +151,19 @@ func invalidCases() []invalidCase {
 			clip0(p)["effects"] = []any{map[string]any{"type": "speed", "factor": 50}}
 		}, "/factor"},
 		{"unknown effect param", func(p map[string]any) {
-			clip0(p)["effects"] = []any{map[string]any{"type": "volume", "gain": 1, "db": 3}}
+			clip0(p)["effects"] = []any{map[string]any{"type": "normalize", "db": 3}}
 		}, "db"},
 		{"param of another effect type", func(p map[string]any) {
-			clip0(p)["effects"] = []any{map[string]any{"type": "volume", "gain": 1, "factor": 2}}
+			clip0(p)["effects"] = []any{map[string]any{"type": "normalize", "factor": 2}}
 		}, "factor"},
+		{"volume as an effect (it is a clip field)", func(p map[string]any) {
+			clip0(p)["effects"] = []any{map[string]any{"type": "volume", "gain": 0.5}}
+		}, "/effects/0/type"},
+		{"volume out of range", func(p map[string]any) { clip0(p)["volume"] = 11 }, "/volume"},
+		{"volume on a text clip", func(p map[string]any) {
+			tr := p["tracks"].([]any)[0].(map[string]any)
+			tr["clips"] = []any{map[string]any{"id": "x", "type": "text", "text": "hi", "at_ms": 0, "duration_ms": 1000, "volume": 0.5}}
+		}, "volume"},
 		{"duplicate effect type", func(p map[string]any) {
 			clip0(p)["effects"] = []any{
 				map[string]any{"type": "speed", "factor": 2},
@@ -209,4 +217,44 @@ func TestInvalidProjectsRejected(t *testing.T) {
 // jsonschema.ValidationError), which includes every instance location.
 func detailed(err error) string {
 	return fmt.Sprintf("%#v", err)
+}
+
+// TestLoaderFixtures checks the semantic (loader-level) fixtures in
+// testdata/loader. Each fixture is valid against the schema — the rule it
+// breaks (e.g. a transition on the first clip, or across a gap) can't be
+// expressed in JSON Schema — and declares the exact error the loader must
+// report in meta.expect_error. The phase 3b loader test will load each
+// fixture and assert that error; this test keeps the fixtures well-formed.
+func TestLoaderFixtures(t *testing.T) {
+	sch := compileSchema(t)
+	files, err := filepath.Glob(filepath.Join("testdata", "loader", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no loader fixtures found")
+	}
+	for _, f := range files {
+		t.Run(filepath.Base(f), func(t *testing.T) {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateBytes(t, sch, data); err != nil {
+				t.Fatalf("loader fixture must be schema-valid (its error is loader-level):\n%v", err)
+			}
+			var p struct {
+				Meta struct {
+					Description string `json:"description"`
+					ExpectError string `json:"expect_error"`
+				} `json:"meta"`
+			}
+			if err := json.Unmarshal(data, &p); err != nil {
+				t.Fatal(err)
+			}
+			if p.Meta.ExpectError == "" || p.Meta.Description == "" {
+				t.Error("loader fixture needs meta.description and meta.expect_error")
+			}
+		})
+	}
 }

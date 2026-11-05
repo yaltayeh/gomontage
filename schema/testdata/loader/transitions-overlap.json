@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "format": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
+  "media": [
+    {
+      "id": "m1",
+      "kind": "video",
+      "path": "m1.mp4",
+      "probe": {
+        "duration_ms": 10000,
+        "has_video": true,
+        "has_audio": true,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30
+      }
+    }
+  ],
+  "tracks": [
+    {
+      "id": "t_main",
+      "kind": "video",
+      "clips": [
+        {
+          "id": "c1",
+          "type": "video",
+          "media": "m1",
+          "at_ms": 0,
+          "in_ms": 1000,
+          "out_ms": 4000
+        },
+        {
+          "id": "c2",
+          "type": "video",
+          "media": "m1",
+          "at_ms": 3000,
+          "in_ms": 2000,
+          "out_ms": 3000,
+          "transition_in": {
+            "type": "crossfade",
+            "duration_ms": 1000
+          }
+        },
+        {
+          "id": "c3",
+          "type": "video",
+          "media": "m1",
+          "at_ms": 4000,
+          "in_ms": 5000,
+          "out_ms": 7000,
+          "transition_in": {
+            "type": "crossfade",
+            "duration_ms": 1200
+          }
+        }
+      ]
+    }
+  ],
+  "meta": {
+    "description": "c2 is 1000 ms long; its own transition uses its first ceil(1000/2) = 500 ms and c3's transition its last floor(1200/2) = 600 ms, which overlap.",
+    "expect_error": "clip \"c2\": transitions overlap: transition_in of \"c2\" uses its first 500ms and transition_in of \"c3\" uses its last 600ms, but \"c2\" is only 1000ms long"
+  }
+}

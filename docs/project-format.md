@@ -134,9 +134,9 @@ interleaved in the array; only the relative order of video tracks matters.
 | `audio` | `audio` |
 
 **Overlap rules** (loader-enforced):
-- *Video track:* clips must not overlap, except that a clip with `transition_in`
-  must overlap the previous clip (by `at_ms` order) by **exactly**
-  `transition_in.duration_ms`.
+- *Video track:* clips must not overlap — ever. Transitions don't need an
+  overlap: they use source handles beyond the clips' in/out points
+  ([§9](#9-transitions)).
 - *Audio track:* clips may overlap freely; overlapping sound is mixed.
 - Gaps are allowed on every track: black on the bottom video track, transparent
   on upper video tracks (see [Known gaps](#14-known-gaps-and-loader-behavior), bug #1), silence on audio.
@@ -169,6 +169,7 @@ fields that don't belong to the type (e.g. `duration_ms` on a `video` clip,
 | `in_ms` | int ≥ 0 | no | `0` | Start of the window in the source. |
 | `out_ms` | int ≥ 1 | no | source end | End of the window (exclusive). `in_ms < out_ms ≤ probe.duration_ms`. |
 | `include_audio` | bool | no | `true` | Play the file's sound with the picture. Ignored if the media has no audio. |
+| `volume` | number 0–10 | no | `1` | Loudness of the clip's sound, linear (see [§6.9](#69-volume)). |
 | `effects` | [Effects](#10-effects) | no | `[]` | |
 | `position`, `anchor`, `size` | [Layout](#7-layout-position-anchor-size) | no | centred, full canvas, contain | |
 
@@ -178,6 +179,7 @@ fields that don't belong to the type (e.g. `duration_ms` on a `video` clip,
 |---|---|---|---|---|
 | `media` | ID | **yes** | | Media of kind `audio`, or kind `video` with `probe.has_audio: true` (its sound is used, the picture is ignored). |
 | `in_ms`, `out_ms` | | | | As for `video` clips. |
+| `volume` | number 0–10 | no | `1` | Loudness, linear (see [§6.9](#69-volume)). |
 | `effects` | [Effects](#10-effects) | no | `[]` | |
 
 ### 6.4 `image` — a still picture (video tracks only)
@@ -215,7 +217,8 @@ PNG transparency is preserved on upper video tracks.
 | `image`, `text`, `color` | `duration_ms` |
 
 The clip occupies `[at_ms, at_ms + duration)`. The project duration is the
-latest end over all **enabled** tracks.
+latest end over all **enabled** tracks. Transitions never change these values
+(they use handles, §9).
 
 All positions are computed in integer milliseconds with this formula, and all
 overlap/transition rules use it. (With fractional speed factors the Go library
@@ -237,6 +240,16 @@ library's `effects.FadeIn/FadeOut/AudioFadeIn/AudioFadeOut` are not exposed).
 
 Go API: `WithFadeIn/WithFadeOut` on every clip type (the compiler applies them to
 picture and embedded sound, after effects — fixed in known bugs #7 and #12).
+
+### 6.9 Volume
+
+`volume` is a clip field on `video` and `audio` clips (the clips that can make
+sound), next to the fade fields. It is a **linear** multiplier: `1` (default)
+unchanged, `0.5` ≈ −6 dB, `2` ≈ +6 dB, `0` silent; range 0–10. It is the only
+way to change a clip's loudness — there is no volume effect. Fades are applied
+on top of it.
+
+Go API: `WithVolume(volume)` on `VideoClip` / `AudioClip`.
 
 ---
 
@@ -312,28 +325,77 @@ See [Known gaps](#14-known-gaps-and-loader-behavior) for fields the compiler doe
 "transition_in": { "type": "crossfade", "duration_ms": 1000 }
 ```
 
-A transition is a property of the **incoming** clip. It blends the previous
-clip on the same track (by `at_ms` order) into this one.
+A transition is a property of the **incoming** clip: it describes the
+transition at the cut between this clip and the **previous clip** on the same
+track, i.e. the clip that ends exactly at this clip's `at_ms`.
 
 | Field | Type | Req. | Description |
 |---|---|---|---|
 | `type` | `"crossfade"` | **yes** | Pictures dissolve into each other; sounds cross-fade. |
-| `duration_ms` | int ≥ 1 | **yes** | Length of the transition = length of the overlap. |
+| `duration_ms` | int ≥ 1 | **yes** | Length of the transition, centred on the cut. |
 
-**Overlap model.** The two clips overlap on the track by exactly
-`duration_ms`: `this.at_ms = previous.at_ms + previous.duration − duration_ms`.
-Inserting a transition therefore shortens the track by `duration_ms`; tools
-that add a transition move this clip (and ripple later clips) left. The
-transition consumes the last `duration_ms` of the previous clip and the first
-`duration_ms` of this clip, so no extra source material ("handles") is needed.
+### 9.1 Handle model
 
-Rules (loader): the clip must not be the first on its track; `duration_ms` ≤
-both clips' durations; `fade_out_ms` of the previous clip and `fade_in_ms` of
-this clip still apply but are usually 0 when a transition is used.
+Clips stay **butt-joined**. A transition is centred on the cut and is made from
+extra source footage ("handles") beyond the clips' in and out points, so
+**adding, changing or removing a transition never changes any `at_ms`, any clip
+duration, or the track/timeline duration.**
 
-Allowed on video tracks (picture + embedded sound) and audio tracks (sound).
-More types (`wipe_left`, `slide_up`, … from FFmpeg `xfade`) can be added later
-without a version change.
+For a cut at `T` (= incoming clip's `at_ms`) and `d = duration_ms`:
+
+```
+before = floor(d / 2)        after = d - before   (= ceil(d / 2))
+
+timeline:   ... outgoing clip P ...  | T |  ... incoming clip C ...
+transition:              [T - before ......... T + after)
+P plays:     normal tail  [T-before, T)   + handle [T, T+after)  ← source AFTER P.out_ms
+C plays:     handle [T-before, T)  ← source BEFORE C.in_ms   + normal head [T, T+after)
+```
+
+Handle sizes in **source** time (speed effects scale them; round up):
+
+| Clip | Needs | Available |
+|---|---|---|
+| incoming `C` (video/audio) | `ceil(before × C.speed)` ms before `C.in_ms` | `C.in_ms` |
+| outgoing `P` (video/audio) | `ceil(after × P.speed)` ms after `P.out_ms` | `media(P).probe.duration_ms − P.out_ms` |
+| `image`, `text`, `color` | — | unlimited (the still picture / text / color simply shows longer) |
+
+`speed` is the clip's `speed.factor` (1 without a speed effect). With
+`affect_audio: false` (not renderable yet, §14) the sound handle would use
+factor 1.
+
+**Worked example** (`examples/effects-transitions.json`, cut into `c_beach` at
+11000 ms, `crossfade` 1000 ms → before = 500, after = 500):
+
+- incoming `c_beach` (in 5000, slow-mo factor 0.5) needs ceil(500 × 0.5) = **250 ms**
+  of source before 5000 — 5000 ms available ✓.
+- outgoing `c_drive` (out 40000, factor 4, media 60000 ms) needs
+  ceil(500 × 4) = **2000 ms** after 40000 — 20000 ms available ✓.
+- The crossfade runs 10500–11500 ms; every `at_ms` and the total length
+  (27000 ms) are unchanged by it.
+
+### 9.2 Rules (loader, all errors)
+
+| Rule | Error message (exact format) |
+|---|---|
+| Not on the first clip of a track. | `clip "c1": transition_in on the first clip of track "t_main" (there is no previous clip)` |
+| A clip must end exactly at `at_ms` (no gap). | `clip "c2": transition_in needs the previous clip to end exactly at at_ms (3500ms); the nearest previous clip "c1" ends at 3000ms (500ms gap)` |
+| Exactly one clip ends at `at_ms` (relevant on audio tracks, where clips may overlap). | `clip "c3": transition_in is ambiguous: clips "a", "b" all end at at_ms (5000ms)` |
+| Incoming handle available. | `clip "c2": transition_in needs 250ms of source before in_ms (100ms); only 100ms available` |
+| Outgoing handle available. | `clip "c2": transition_in needs 250ms of source after out_ms (4000ms) of previous clip "c1"; only 100ms available (media "m_short" is 4100ms long)` |
+| A clip's two transitions don't overlap: `after(own transition_in) + before(next clip's transition_in) ≤ clip duration`. | `clip "c2": transitions overlap: transition_in of "c2" uses its first 500ms and transition_in of "c3" uses its last 600ms, but "c2" is only 1000ms long` |
+
+Each rule has a fixture in `schema/testdata/loader/` that is schema-valid and
+records the expected message in `meta.expect_error`.
+
+### 9.3 Interaction with fades and tracks
+
+- Fades still apply to the clip's own span `[at_ms, at_ms + duration)`; handle
+  footage is not faded. Use fades **or** a transition at a cut, usually not both.
+- Allowed on video tracks (picture and the sound of video clips) and on audio
+  tracks (sound).
+- More types (`wipe_left`, `slide_up`, … from FFmpeg `xfade`) can be added later
+  without a version change.
 
 Go API: **none yet** — see [Known gaps](#14-known-gaps-and-loader-behavior).
 
@@ -344,7 +406,7 @@ Go API: **none yet** — see [Known gaps](#14-known-gaps-and-loader-behavior).
 ```json
 "effects": [
   { "type": "speed", "factor": 0.5, "affect_audio": false },
-  { "type": "volume", "gain": 0.4 }
+  { "type": "normalize", "target_lufs": -16 }
 ]
 ```
 
@@ -358,11 +420,11 @@ and `audio` clips only. They are applied in list order.
 | Type | Params | Description | Go API |
 |---|---|---|---|
 | `speed` | `factor` (req, 0.1–10), `affect_audio` (bool, default `true`) | Plays faster (`2`) or slower (`0.5`). Timeline duration = source window / factor. With `affect_audio: true` the sound is retimed too (pitch preserved), keeping sync. With `false` the sound plays at normal speed and is cut at the clip end (or ends early when slowed). Not allowed with `affect_audio: false` on `audio` clips (meaningless). | video clip: `effects.SpeedUp(factor)` (audio follows automatically, fixed in bug #8). `affect_audio:false`: add `effects.AudioSpeed(1)` to suppress the automatic retiming (see gaps). audio clip: `effects.AudioSpeed(factor)`. |
-| `volume` | `gain` (req, 0–10, linear) | Loudness multiplier: 1 unchanged, 0.5 ≈ −6 dB, 0 silent. | `WithVolume(gain)` |
 | `normalize` | `target_lufs` (−70 to −5, default −16) | EBU R128 loudness normalization. | `effects.NormalizeTo(target_lufs)` |
 
 There is no separate audio-speed effect (one way to change speed) and no fade
-effects (fades are clip fields). Volume/normalize on a `video` clip with
+effects (fades are clip fields) and no volume effect (`volume` is a clip
+field, §6.9). `normalize` or `volume ≠ 1` on a `video` clip with
 `include_audio: false` or without sound have no effect; the loader warns.
 
 ---
@@ -397,8 +459,21 @@ render settings are chosen; tools may also pass preset/path per render.
 
 ## 12. Validation
 
-Validation happens in two layers. Both report **all** problems found (not just
-the first), each with a JSON-pointer location and, where available, the ID:
+Validation happens in two layers, in this order:
+
+1. **Schema (shape).** The loader embeds `schema/project.v1.schema.json` with
+   `go:embed` and validates every file against it before doing anything else.
+   The schema is the **single source of truth for shape validation**; the loader
+   does not re-implement those rules in Go. (`go:embed` cannot reach parent
+   directories, so the `schema` package will expose the embedded file, e.g.
+   `schema.ProjectV1 []byte`, and the loader imports it. The validator is
+   `github.com/santhosh-tekuri/jsonschema/v6`, already used by
+   `schema/schema_test.go`.)
+2. **Loader rules (semantics)** L1–L14 below, which JSON Schema cannot express.
+   They run only if the schema validation passed, so they can rely on the shape.
+
+Both layers report **all** problems found (not just the first), each with a
+JSON-pointer location and, where available, the ID:
 
 ```
 /tracks/1/clips/0 (clip "c_logo"): media "m_logo2" does not exist
@@ -418,15 +493,16 @@ at-most-once effects, integer times.
 | L2 | Every `media` reference exists and has a compatible kind (§6). | error |
 | L3 | `in_ms < out_ms ≤ media.probe.duration_ms`. | error |
 | L4 | `fade_in_ms + fade_out_ms ≤` clip duration. | error |
-| L5 | Video-track overlap rules and transition rules (§5, §9). | error |
+| L5 | No overlapping clips on video tracks (§5). | error |
 | L6 | `speed.affect_audio: false` only on `video` clips. | error |
 | L7 | `output.path` extension suits `output.preset`. | error |
 | L8 | Media file exists at `path`. | warning on load, error on render (so tools can open a project and relink missing media) |
 | L9 | Font `file` exists / font `family` resolves. | error on render |
 | L10 | Fingerprint differs from the file. | warning |
-| L11 | Audio effects on a clip that produces no sound (`include_audio: false`, or media without audio). | warning |
+| L11 | `volume ≠ 1` or a `normalize` effect on a clip that produces no sound (`include_audio: false`, or media without audio). | warning |
 | L12 | At least one enabled clip (for rendering). | error on render |
 | L13 | Features the library can't render yet (§14). | error |
+| L14 | Transition placement and handles: not on a track's first clip, previous clip directly adjacent and unique, enough source before `in_ms` / after `out_ms`, transitions on one clip don't overlap (§9.2, exact messages there). | error |
 
 Warnings never block loading; the loader returns them alongside the timeline.
 
@@ -448,6 +524,7 @@ Warnings never block loading; the loader returns them alongside the timeline.
 | `text` clip | `clip.NewText(text, clip.TextStyle{…}).WithDuration(d)` |
 | `at_ms` | `track.Add(c, at)` |
 | `fade_in_ms` / `fade_out_ms` | `.WithFadeIn(d)` / `.WithFadeOut(d)` |
+| `volume` | `.WithVolume(v)` (only when ≠ 1) |
 | effects | §10 table |
 | `output.preset` | §11 table; render with `tl.Export(profile, path)` |
 | ms → Go | `time.Duration(ms) * time.Millisecond` (exact) |
@@ -461,7 +538,7 @@ Warnings never block loading; the loader returns them alongside the timeline.
    and `clip.NewAudioFromInfo(...)`, setting duration, has-audio, size and the
    source length used by `clip.SourceProblem`.
 2. A way to report **all** validation problems: `Timeline.Validate` returns the
-   first error only. The loader does its own L1–L13 checks, so this is not
+   first error only. The loader does its own L1–L14 checks, so this is not
    blocking.
 
 ---
@@ -476,7 +553,7 @@ mismatches are warnings.
 
 | Format feature | Library status | Loader behavior until supported |
 |---|---|---|
-| `transition_in` | Not implemented (no `xfade`/`acrossfade`; video-track overlaps are rejected by `Timeline.Validate`). | **error**: `clip "c_beach": transition_in is not supported yet` |
+| `transition_in` | Not implemented: no `xfade`/`acrossfade`, and the compiler can't yet read handle footage beyond a clip's in/out points. The L14 checks (placement, handles) still run first, so a project is only rejected for this once its transitions are otherwise valid. | **error**: `clip "c_beach": transition_in is not supported yet` |
 | Clips on upper video tracks (any video track after the first) | Known bug **#1**: upper tracks are opaque black outside their content (gaps, padding, text background). | **error** while bug #1 is open: `track "t_logo": overlay tracks are not supported yet (known bug #1)` |
 | `position`, `anchor`, `size` with non-default values | Known bug **#2**: ignored; `overlay` always at 0,0 and every clip is fitted to the canvas. | **error** while bug #2 is open. Default values (centred, full-canvas contain) are fine. |
 | `size.fit: "cover"` / `"stretch"` | Not implemented (clips are always contained). | **error** |
@@ -514,8 +591,8 @@ will be rejected with the errors above until those gaps close.
   `ExternalReference` to the media path and `source_range` =
   `RationalTime(in_ms, 1000)…`; gaps → `Gap` items (OTIO tracks are
   sequential, so `at_ms` positions become gaps); `transition_in` →
-  `Transition` with `in_offset + out_offset = duration_ms` (e.g. half each, cutting in the middle of our overlap);
-  `speed` → `LinearTimeWarp`; `volume`/`normalize` → effects with metadata;
+  `Transition` with `in_offset = floor(d/2)` and `out_offset = ceil(d/2)` — OTIO uses the same handle model (transitions sit on the cut and use media beyond the clips' source ranges), so no conversion is needed;
+  `speed` → `LinearTimeWarp`; `volume`/`normalize` → effects/metadata;
   layout → metadata (no OTIO equivalent). Millisecond times convert exactly to
   `RationalTime(ms, 1000)`.
 
@@ -526,6 +603,32 @@ will be rejected with the errors above until those gaps close.
 | File | Shows | Renders today? |
 |---|---|---|
 | [`simple-trim-concat.json`](../examples/simple-trim-concat.json) | Trim + back-to-back sequence, fades, fingerprint | yes |
-| [`reel-arabic-overlay.json`](../examples/reel-arabic-overlay.json) | 9:16 reel, Arabic text with box, logo overlay, music with volume, `cover` | no (§14) |
+| [`reel-arabic-overlay.json`](../examples/reel-arabic-overlay.json) | 9:16 reel, Arabic text with box, logo overlay, music with `volume`, `cover` | no (§14) |
 | [`podcast-audio.json`](../examples/podcast-audio.json) | Audio-only WAV, sound from a video file, normalize, disabled track, `meta` | yes |
-| [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades, color clip, normalize + volume | no (§14) |
+| [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades (video and audio tracks), color clip, normalize + `volume` | no (§14) |
+
+---
+
+## 17. Design decisions (v1)
+
+Decided during review of the phase 3a design (PRs #2 and its follow-up).
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | ID uniqueness scope | Global across media, tracks and clips. |
+| 2 | `media` shape | Array of entries with `id` (same shape as tracks/clips). |
+| 3 | Transition model | **Handle model**: butt-joined clips, transition centred on the cut, handles from source beyond in/out (§9). |
+| 4 | Volume | Clip field `volume` (linear, default 1) next to the fades; no volume effect. |
+| 5 | Volume units | Linear gain. |
+| 6 | Text size | Fraction of canvas height. |
+| 7 | Default size of upper-track clips | Full canvas, `contain` (matches today's library). |
+| 8 | Missing media file | Warning on load, error on render. |
+| 9 | Features the library can't render yet | Strict load errors (§14). |
+| 10 | `format` in audio-only projects | Always required. |
+| 11 | Transitions on audio tracks | Allowed. |
+| 12 | `speed.affect_audio: false` | Sound at normal speed, cut at the clip end (or ending early when slowed). |
+| 13 | Output | Single `output`, preset only (no overrides) in v1. |
+| 14 | fps | Number (loader maps 29.97/59.94/23.976 to exact NTSC rates when supported). |
+| 15 | File naming | `*.gomontage.json`. |
+| 16 | Schema validation in the loader | Loader embeds the schema and validates every file with it first; the schema is the single source of truth for shape (§12). |
+| 17 | Gap/background color | Deferred (gaps are black on the bottom track). |

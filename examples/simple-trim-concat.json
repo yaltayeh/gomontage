@@ -2,26 +2,58 @@
   "$schema": "../schema/project.v1.schema.json",
   "version": 1,
   "name": "Interview cut",
-  "format": { "width": 1920, "height": 1080, "fps": 30 },
+  "format": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
   "media": [
     {
       "id": "m_intro",
       "kind": "video",
       "path": "media/intro.mp4",
-      "probe": { "duration_ms": 6000, "has_video": true, "has_audio": true, "width": 1920, "height": 1080, "fps": 30, "sample_rate": 48000, "channels": 2 },
-      "fingerprint": { "size_bytes": 4194304, "modified_unix_ms": 1793779200000 }
+      "probe": {
+        "duration_ms": 6000,
+        "has_video": true,
+        "has_audio": true,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30,
+        "sample_rate": 48000,
+        "channels": 2
+      },
+      "fingerprint": {
+        "size_bytes": 4194304,
+        "modified_unix_ms": 1793779200000
+      }
     },
     {
       "id": "m_interview",
       "kind": "video",
       "path": "media/interview.mov",
-      "probe": { "duration_ms": 312480, "has_video": true, "has_audio": true, "width": 3840, "height": 2160, "fps": 59.94, "sample_rate": 48000, "channels": 2 }
+      "probe": {
+        "duration_ms": 312480,
+        "has_video": true,
+        "has_audio": true,
+        "width": 3840,
+        "height": 2160,
+        "fps": 59.94,
+        "sample_rate": 48000,
+        "channels": 2
+      }
     },
     {
       "id": "m_outro",
       "kind": "video",
       "path": "media/outro.mp4",
-      "probe": { "duration_ms": 4000, "has_video": true, "has_audio": false, "width": 1920, "height": 1080, "fps": 30 }
+      "probe": {
+        "duration_ms": 4000,
+        "has_video": true,
+        "has_audio": false,
+        "width": 1920,
+        "height": 1080,
+        "fps": 30
+      }
     }
   ],
   "tracks": [
@@ -30,12 +62,43 @@
       "kind": "video",
       "name": "main",
       "clips": [
-        { "id": "c_intro", "type": "video", "media": "m_intro", "at_ms": 0, "fade_in_ms": 500 },
-        { "id": "c_answer1", "type": "video", "label": "answer 1", "media": "m_interview", "at_ms": 6000, "in_ms": 12000, "out_ms": 27500 },
-        { "id": "c_answer2", "type": "video", "label": "answer 2", "media": "m_interview", "at_ms": 21500, "in_ms": 95250, "out_ms": 118000 },
-        { "id": "c_outro", "type": "video", "media": "m_outro", "at_ms": 44250, "fade_out_ms": 1000 }
+        {
+          "id": "c_intro",
+          "type": "video",
+          "media": "m_intro",
+          "at_ms": 0,
+          "fade_in_ms": 500
+        },
+        {
+          "id": "c_answer1",
+          "type": "video",
+          "label": "answer 1",
+          "media": "m_interview",
+          "at_ms": 6000,
+          "in_ms": 12000,
+          "out_ms": 27500
+        },
+        {
+          "id": "c_answer2",
+          "type": "video",
+          "label": "answer 2",
+          "media": "m_interview",
+          "at_ms": 21500,
+          "in_ms": 95250,
+          "out_ms": 118000
+        },
+        {
+          "id": "c_outro",
+          "type": "video",
+          "media": "m_outro",
+          "at_ms": 44250,
+          "fade_out_ms": 1000
+        }
       ]
     }
   ],
-  "output": { "preset": "youtube_1080p", "path": "output/interview-cut.mp4" }
+  "output": {
+    "preset": "youtube_1080p",
+    "path": "output/interview-cut.mp4"
+  }
 }
