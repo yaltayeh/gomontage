@@ -109,3 +109,51 @@ func TestProject_ImportMediaMissingFile(t *testing.T) {
 		t.Errorf("err = %v", err)
 	}
 }
+
+// volume: 0 is an explicit value (muted), not "unset": it must render
+// silent, not at the default volume 1, after a Save/Load round trip.
+func TestProject_MutedClipsRenderSilent(t *testing.T) {
+	requireFFmpeg(t)
+	dir := t.TempDir()
+	p := project.New(dir, project.Format{Width: 320, Height: 180, FPS: 30})
+	v, err := project.ImportMedia(p, moveInto(t, genVideo(t, VideoSpec{Color: "0xFF0000", ToneHz: 440, Dur: 2 * time.Second}), dir, "v.mp4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := project.ImportMedia(p, moveInto(t, genTone(t, 330, 2*time.Second), dir, "a.wav"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	zero := 0.0
+	p.Tracks = []project.Track{
+		{ID: "t_v", Kind: project.KindVideo, Clips: []project.Clip{
+			{ID: "c_muted", Type: project.ClipVideo, Media: v, OutMS: 1000, Volume: &zero},
+			{ID: "c_loud", Type: project.ClipVideo, Media: v, AtMS: 1000, InMS: 1000},
+		}},
+		{ID: "t_music", Kind: project.KindAudio, Clips: []project.Clip{
+			{ID: "c_music", Type: project.ClipAudio, Media: a, Volume: &zero},
+		}},
+	}
+	path := filepath.Join(dir, "p"+project.FileExtension)
+	if err := project.Save(path, p); err != nil {
+		t.Fatal(err)
+	}
+	q, _, err := project.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tl, err := project.Build(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "out.mp4")
+	if err := tl.ExportSilent(testProfile(), out); err != nil {
+		t.Fatal(err)
+	}
+	if l := audioLevel(t, out, 100*time.Millisecond, 800*time.Millisecond); l.MeanDB > -60 {
+		t.Errorf("muted clip + muted music should be silent, got %.1f dB", l.MeanDB)
+	}
+	if l := audioLevel(t, out, 1100*time.Millisecond, 800*time.Millisecond); l.MeanDB < -40 {
+		t.Errorf("un-muted clip should be audible, got %.1f dB", l.MeanDB)
+	}
+}
