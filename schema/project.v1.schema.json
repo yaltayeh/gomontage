@@ -275,7 +275,7 @@
       }
     },
     "track": {
-      "description": "A track holds clips of one kind. On a video track, clips must not overlap in time, except where a clip's transition_in overlaps the previous clip by exactly the transition duration. On an audio track, clips may overlap freely; overlapping sound is mixed.",
+      "description": "A track holds clips of one kind. On a video track, clips must not overlap in time (transitions do not need an overlap: they use handles, see transition). On an audio track, clips may overlap freely; overlapping sound is mixed.",
       "type": "object",
       "required": [
         "id",
@@ -547,7 +547,7 @@
       }
     },
     "transition": {
-      "description": "A transition from the previous clip on the same track into this clip. The two clips overlap by duration_ms: this clip's at_ms must equal the previous clip's end minus duration_ms. During the overlap the previous clip's picture and sound blend into this clip's. Not rendered yet by the current library (see docs/project-format.md, Known gaps).",
+      "description": "A transition at the cut between this clip and the previous clip on the same track (the clip that ends exactly at this clip's at_ms). Handle model: clips stay butt-joined and the transition is centred on the cut, so adding or removing a transition never changes any at_ms or any duration. For a transition of d ms, the incoming clip starts showing floor(d/2) ms before the cut, using source footage from before its in_ms, and the outgoing clip keeps playing ceil(d/2) ms after the cut, using source footage from after its out_ms (scaled by each clip's speed factor). Image, text and color clips have unlimited handles. Not allowed on the first clip of a track or after a gap. Not rendered yet by the current library (see docs/project-format.md, Known gaps).",
       "type": "object",
       "required": [
         "type",
@@ -562,7 +562,7 @@
           ]
         },
         "duration_ms": {
-          "description": "Length of the transition (= the overlap with the previous clip), in milliseconds. Must not exceed either clip's duration.",
+          "description": "Length of the transition in milliseconds, centred on the cut: floor(duration_ms/2) before it and ceil(duration_ms/2) after it. Both clips need enough source footage beyond their in_ms/out_ms (handles); the loader reports exactly how much is missing otherwise.",
           "$ref": "#/$defs/positiveMs"
         }
       }

@@ -218,3 +218,43 @@ func TestInvalidProjectsRejected(t *testing.T) {
 func detailed(err error) string {
 	return fmt.Sprintf("%#v", err)
 }
+
+// TestLoaderFixtures checks the semantic (loader-level) fixtures in
+// testdata/loader. Each fixture is valid against the schema — the rule it
+// breaks (e.g. a transition on the first clip, or across a gap) can't be
+// expressed in JSON Schema — and declares the exact error the loader must
+// report in meta.expect_error. The phase 3b loader test will load each
+// fixture and assert that error; this test keeps the fixtures well-formed.
+func TestLoaderFixtures(t *testing.T) {
+	sch := compileSchema(t)
+	files, err := filepath.Glob(filepath.Join("testdata", "loader", "*.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no loader fixtures found")
+	}
+	for _, f := range files {
+		t.Run(filepath.Base(f), func(t *testing.T) {
+			data, err := os.ReadFile(f)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateBytes(t, sch, data); err != nil {
+				t.Fatalf("loader fixture must be schema-valid (its error is loader-level):\n%v", err)
+			}
+			var p struct {
+				Meta struct {
+					Description string `json:"description"`
+					ExpectError string `json:"expect_error"`
+				} `json:"meta"`
+			}
+			if err := json.Unmarshal(data, &p); err != nil {
+				t.Fatal(err)
+			}
+			if p.Meta.ExpectError == "" || p.Meta.Description == "" {
+				t.Error("loader fixture needs meta.description and meta.expect_error")
+			}
+		})
+	}
+}

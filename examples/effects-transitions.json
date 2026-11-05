@@ -94,7 +94,7 @@
           "type": "video",
           "label": "slow-motion waves",
           "media": "m_beach",
-          "at_ms": 10000,
+          "at_ms": 11000,
           "in_ms": 5000,
           "out_ms": 9000,
           "transition_in": {
@@ -114,7 +114,7 @@
           "id": "c_sunset",
           "type": "video",
           "media": "m_sunset",
-          "at_ms": 17000,
+          "at_ms": 19000,
           "in_ms": 2000,
           "out_ms": 10000,
           "transition_in": {
@@ -136,10 +136,30 @@
           "media": "m_song",
           "at_ms": 0,
           "in_ms": 30000,
-          "out_ms": 55000,
+          "out_ms": 45000,
           "fade_in_ms": 2000,
+          "volume": 0.8,
+          "effects": [
+            {
+              "type": "normalize",
+              "target_lufs": -14
+            }
+          ]
+        },
+        {
+          "id": "c_song_b",
+          "type": "audio",
+          "label": "second part of the song",
+          "media": "m_song",
+          "at_ms": 15000,
+          "in_ms": 100000,
+          "out_ms": 112000,
           "fade_out_ms": 3000,
           "volume": 0.8,
+          "transition_in": {
+            "type": "crossfade",
+            "duration_ms": 2000
+          },
           "effects": [
             {
               "type": "normalize",
