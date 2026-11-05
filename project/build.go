@@ -18,40 +18,41 @@ import (
 
 // Validate checks p exactly as Load checks a file (schema, then loader rules)
 // and returns the load-time warnings. Use it for projects built or edited in
-// Go before saving or building them.
+// Go before saving them; Check also runs the render-time checks.
 func Validate(p *Project) ([]Warning, error) {
-	_, warnings, err := validated(p)
-	return warnings, err
-}
-
-// validated returns a canonical, validated copy of p.
-func validated(p *Project) (*Project, []Warning, error) {
 	data, err := Marshal(p)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	return Parse(data, p.dir)
+	_, warnings, err := Parse(data, p.dir)
+	return warnings, err
 }
 
 // Build turns a project into a timeline.Timeline using the cached probe data
 // in the media bin (no file is probed).
 //
-// Build first validates p like Load does, then runs the render-time checks:
-// media files used by enabled clips exist (L8), font files exist (L9), there
-// is at least one enabled clip (L12), and the project uses no feature the
-// library can't render yet (L13, specification section 14) — so a project is
-// never rendered differently from what the file says. All problems are
-// returned together in a *ValidationError.
+// Build runs Check first: project errors (schema, loader rules) or, if there
+// are none, render blockers (missing media used by enabled clips, missing
+// font files, no enabled clips, features the library can't render yet —
+// specification section 14) are returned in a *ValidationError, so a project
+// is never rendered differently from what the file says. output.fit is not
+// checked here (it doesn't affect the timeline); RenderTarget and Check do.
 //
 // Disabled tracks are skipped. Media paths in the timeline are resolved
 // against p.Dir().
 func Build(p *Project) (*timeline.Timeline, error) {
-	q, _, err := validated(p)
-	if err != nil {
-		return nil, err
+	r, q := check(p)
+	if len(r.ProjectErrors) > 0 {
+		return nil, r.Err()
 	}
-	if problems := renderProblems(q); len(problems) > 0 {
-		return nil, &ValidationError{Problems: problems}
+	var blockers []Problem
+	for _, b := range r.RenderBlockers {
+		if b.Path != "/output/fit" {
+			blockers = append(blockers, b)
+		}
+	}
+	if len(blockers) > 0 {
+		return nil, &ValidationError{Problems: blockers}
 	}
 
 	tl := timeline.New(timeline.Config{Width: q.Format.Width, Height: q.Format.Height, FPS: q.Format.FPS})
