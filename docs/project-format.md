@@ -459,8 +459,21 @@ render settings are chosen; tools may also pass preset/path per render.
 
 ## 12. Validation
 
-Validation happens in two layers. Both report **all** problems found (not just
-the first), each with a JSON-pointer location and, where available, the ID:
+Validation happens in two layers, in this order:
+
+1. **Schema (shape).** The loader embeds `schema/project.v1.schema.json` with
+   `go:embed` and validates every file against it before doing anything else.
+   The schema is the **single source of truth for shape validation**; the loader
+   does not re-implement those rules in Go. (`go:embed` cannot reach parent
+   directories, so the `schema` package will expose the embedded file, e.g.
+   `schema.ProjectV1 []byte`, and the loader imports it. The validator is
+   `github.com/santhosh-tekuri/jsonschema/v6`, already used by
+   `schema/schema_test.go`.)
+2. **Loader rules (semantics)** L1–L14 below, which JSON Schema cannot express.
+   They run only if the schema validation passed, so they can rely on the shape.
+
+Both layers report **all** problems found (not just the first), each with a
+JSON-pointer location and, where available, the ID:
 
 ```
 /tracks/1/clips/0 (clip "c_logo"): media "m_logo2" does not exist
