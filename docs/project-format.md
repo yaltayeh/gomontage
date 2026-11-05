@@ -1,7 +1,8 @@
 # GoMontage Project Format — Version 1
 
-**Status:** design (phase 3a). No loader or saver exists yet; this document is
-the contract that `project.Load` (phase 3b) and the MCP server will implement.
+**Status:** implemented in package `project` (phase 3b) — see
+[§18 Go API](#18-go-api) — and the `gomontage render` / `gomontage validate`
+commands. The MCP server will build on the same package.
 
 - JSON Schema: [`schema/project.v1.schema.json`](../schema/project.v1.schema.json) (draft 2020-12)
 - Examples: [`examples/`](../examples) — every example is validated against the
@@ -26,7 +27,7 @@ a `*timeline.Timeline` from the file.
 | Paths | Relative to the directory containing the project file, `/` as separator. `..` is allowed; absolute paths (`/…`, `\…`, `C:…`) are not. |
 | Colors | `#RRGGBB` or `#RRGGBBAA` (AA = alpha, `FF` opaque). |
 | Canvas coordinates | Fractions of the canvas: `x`,`y` in [0, 1], (0,0) = top-left. Sizes are fractions of canvas width/height. Font sizes are fractions of canvas height. Everything visual therefore survives a change of `format.width/height`. |
-| Defaults | A field's default applies when it is absent. Savers may omit fields equal to their default. |
+| Defaults | A field's default applies when it is absent. `project.Save` writes the **canonical form**: fields equal to their default are omitted, keys in a fixed order (the schema's), 2-space indent, trailing newline, no HTML escaping. The files in `examples/` are kept in canonical form. |
 
 ---
 
@@ -472,12 +473,17 @@ Validation happens in two layers, in this order:
 2. **Loader rules (semantics)** L1–L14 below, which JSON Schema cannot express.
    They run only if the schema validation passed, so they can rely on the shape.
 
-Both layers report **all** problems found (not just the first), each with a
-JSON-pointer location and, where available, the ID:
+Both layers report **all** problems found (not just the first), each as a
+JSON-pointer location and a message that names the item it is about. They are
+printed as `<pointer>: <message>` (`/` for the whole document):
 
 ```
-/tracks/1/clips/0 (clip "c_logo"): media "m_logo2" does not exist
+/tracks/1/clips/0: clip "c_logo": media "m_logo2" does not exist
 ```
+
+Schema problems use the validator's message, e.g.
+`/tracks/0/clips/0/effects/0/type: value must be one of 'speed', 'normalize'`.
+The loader-rule messages are listed in [§12.3](#123-messages).
 
 ### 12.1 Schema (structure) — `schema/project.v1.schema.json`
 
@@ -491,20 +497,53 @@ at-most-once effects, integer times.
 |---|---|---|
 | L1 | IDs are unique across media, tracks and clips. | error |
 | L2 | Every `media` reference exists and has a compatible kind (§6). | error |
-| L3 | `in_ms < out_ms ≤ media.probe.duration_ms`. | error |
+| L3 | `in_ms < out_ms ≤ media.probe.duration_ms`, and the clip's timeline duration (after speed) is at least 1 ms. | error |
 | L4 | `fade_in_ms + fade_out_ms ≤` clip duration. | error |
 | L5 | No overlapping clips on video tracks (§5). | error |
 | L6 | `speed.affect_audio: false` only on `video` clips. | error |
 | L7 | `output.path` extension suits `output.preset`. | error |
-| L8 | Media file exists at `path`. | warning on load, error on render (so tools can open a project and relink missing media) |
-| L9 | Font `file` exists / font `family` resolves. | error on render |
+| L8 | Media file exists at `path`. | warning on load (every entry); error on render for media used by enabled clips (so tools can open a project and relink missing media) |
+| L9 | Font `file` exists. (Font `family` is a known gap, L13.) | error on render |
 | L10 | Fingerprint differs from the file. | warning |
 | L11 | `volume ≠ 1` or a `normalize` effect on a clip that produces no sound (`include_audio: false`, or media without audio). | warning |
 | L12 | At least one enabled clip (for rendering). | error on render |
-| L13 | Features the library can't render yet (§14). | error |
+| L13 | Features the library can't render yet (§14). | error on render (Build) — a project using them still loads, so tools can open and edit it |
 | L14 | Transition placement and handles: not on a track's first clip, previous clip directly adjacent and unique, enough source before `in_ms` / after `out_ms`, transitions on one clip don't overlap (§9.2, exact messages there). | error |
 
-Warnings never block loading; the loader returns them alongside the timeline.
+Warnings never block loading; `Load` returns them alongside the project.
+
+"On render" means `project.Build` (and therefore `gomontage render` and
+`gomontage validate <file>`). Build also validates its input like Load, so
+projects built or edited in Go get the same checks. L7 also applies to
+per-render overrides of the preset/output file.
+
+### 12.3 Messages
+
+Exact messages (`%q` = quoted value, `%d` = integer). JSON pointers point at
+the clip, or at the field when one field is at fault.
+
+| Rule | Pointer | Message |
+|---|---|---|
+| L1 | the later item | `duplicate id "c1" (already used at /media/0)` |
+| L2 | clip | `clip "c1": media "m9" does not exist` |
+| L2 | clip | `clip "c1": media "m_a" is of kind "audio"; video clips need media of kind "video"` (same wording for `image` clips) |
+| L2 | clip | `clip "c1": media "m_i" is of kind "image"; audio clips need media of kind "audio" or "video"` |
+| L2 | clip | `clip "c1": media "m_silent" has no audio` (audio clip on a video file without sound) |
+| L3 | clip | `clip "c1": out_ms (7000) is past the end of media "m_v" (6000ms)` |
+| L3 | clip | `clip "c1": in_ms (3000) must be less than out_ms (3000)` |
+| L3 | clip | `clip "c1": in_ms (6000) must be less than the end of media "m_v" (6000ms)` (no `out_ms`) |
+| L3 | clip | `clip "c1": duration rounds to 0ms (source window 4ms at speed 10)` |
+| L4 | clip | `clip "c1": fade_in_ms + fade_out_ms (2500ms) exceed the clip's duration (2000ms)` |
+| L5 | the later clip | `clip "c3": overlaps clip "c1" on video track "t_v" by 500ms ("c1" ends at 3000ms, "c3" starts at 2500ms)` |
+| L6 | effect | `clip "c2": speed.affect_audio false is only allowed on video clips` |
+| L7 | `/output/path` | `output: path "out/final.wav" has extension ".wav"; preset "youtube_1080p" needs .mp4 or .mov` (or `has no extension`) |
+| L8 | media | `media "m_x": file not found: media/x.mp4` (warning on load; error on render) |
+| L9 | `…/style/font/file` | `clip "c1": font file not found: fonts/x.ttf` |
+| L10 | media | `media "m_x": file changed since it was probed; re-import it` (warning) |
+| L11 | clip | `clip "c1": volume has no effect: the clip has no sound (include_audio is false)` — also `normalize has no effect`, and `(media "m_x" has no audio)` (warning) |
+| L12 | `/` | `project has no enabled clips to render` |
+| L13 | see §14 | see §14 |
+| L14 | clip | see §9.2 |
 
 ---
 
@@ -516,22 +555,23 @@ Warnings never block loading; the loader returns them alongside the timeline.
 | video track (array order) | `tl.AddVideoTrack(name)` |
 | audio track | `tl.AddAudioTrack(name)` |
 | `enabled: false` | track not added (loader-only) |
-| `video` clip | `clip.NewVideo…(path)` (see below) `.Trim(in, out)`; `include_audio:false` → `.VideoOnly()` |
-| `audio` clip, audio media | `clip.NewAudio…(path).Trim(in, out)` on an `AudioTrack` |
-| `audio` clip, video media | `clip.NewVideo…(path).AudioOnly().Trim(in, out)` on an `AudioTrack` |
+| `video` clip | `clip.NewVideoFromInfo(path, probe)`; `.Trim(in, out)` only when the window isn't the whole file; `include_audio:false` → `.VideoOnly()` |
+| `audio` clip, audio media | `clip.NewAudioFromInfo(path, probe)` (+ `.Trim`) on an `AudioTrack` |
+| `audio` clip, video media | `clip.NewVideoFromInfo(path, probe).AudioOnly()` (+ `.Trim`) on an `AudioTrack` |
 | `image` clip | `clip.NewImage(path).WithDuration(d)` |
 | `color` clip | `clip.NewColor(color, 0, 0).WithDuration(d)` |
 | `text` clip | `clip.NewText(text, clip.TextStyle{…}).WithDuration(d)` |
-| `at_ms` | `track.Add(c, at)` |
+| `at_ms` | `track.Add(c, at)`; clips are added in `at_ms` order |
 | `fade_in_ms` / `fade_out_ms` | `.WithFadeIn(d)` / `.WithFadeOut(d)` |
 | `volume` | `.WithVolume(v)` (only when ≠ 1) |
 | effects | §10 table |
 | `output.preset` | §11 table; render with `tl.Export(profile, path)` |
 | ms → Go | `time.Duration(ms) * time.Millisecond` (exact) |
 
-**Library additions needed by the loader** (phase 3b, all additive):
+**Library additions** (done in phase 3b):
 
-1. **Build clips from stored probe data, without re-probing.** Today
+1. **Build clips from stored probe data, without re-probing** — implemented as
+   `clip.NewVideoFromInfo` / `clip.NewAudioFromInfo`. Previously
    `NewVideo/NewAudio` always run ffprobe, and `NewVideoWithDuration` hard-codes
    `hasAudio = true` and records no source length (so `Validate` can't check
    trims). Needed: e.g. `clip.NewVideoFromInfo(path string, info *engine.MediaInfo)`
@@ -547,24 +587,26 @@ Warnings never block loading; the loader returns them alongside the timeline.
 
 The format is defined ahead of the library. Principle: **the loader never
 silently renders something different from what the file says.** Anything the
-library cannot render yet is a load **error** naming the field, the clip ID and
-the reason, so a tool or agent can remove or change it. Purely informational
-mismatches are warnings.
+library cannot render yet is an **error at render time** (`project.Build`,
+`gomontage render`/`validate`) naming the field, the item ID and the reason, so
+a tool or agent can remove or change it. Such projects still **load**, so they
+can be opened and edited. Purely informational mismatches are warnings.
+Messages below are exact; pointers are the clip, track or field named.
 
 | Format feature | Library status | Loader behavior until supported |
 |---|---|---|
 | `transition_in` | Not implemented: no `xfade`/`acrossfade`, and the compiler can't yet read handle footage beyond a clip's in/out points. The L14 checks (placement, handles) still run first, so a project is only rejected for this once its transitions are otherwise valid. | **error**: `clip "c_beach": transition_in is not supported yet` |
 | Clips on upper video tracks (any video track after the first) | Known bug **#1**: upper tracks are opaque black outside their content (gaps, padding, text background). | **error** while bug #1 is open: `track "t_logo": overlay tracks are not supported yet (known bug #1)` |
-| `position`, `anchor`, `size` with non-default values | Known bug **#2**: ignored; `overlay` always at 0,0 and every clip is fitted to the canvas. | **error** while bug #2 is open. Default values (centred, full-canvas contain) are fine. |
-| `size.fit: "cover"` / `"stretch"` | Not implemented (clips are always contained). | **error** |
-| `output.fit: "cover"` | Not implemented (`CompileProfile` always contains). | **error** |
-| `text.style.font.family` | `TextStyle` only has a font file; drawtext's `font=` (fontconfig) is not used. | **error** (use `font.file`) |
-| `text.style.box`, `outline` | `TextStyle.Background/BorderWidth/BorderColor/BoxPadding` exist but the compiler ignores them. | **error** |
-| `text.style.align`, `direction: "ltr"/"rtl"` | Not supported (drawtext auto-detects direction; no alignment option). `auto`/`center` defaults are fine. | **error** for non-default values |
-| `text.style.size` | Supported (converted to px). | — |
-| Text on the bottom track | Supported, but the text is drawn on an opaque black background (#1 is about upper tracks; on the bottom track black is expected). | — |
-| Colors with alpha (`#RRGGBBAA`) on `color` clips | The compiler converts generated clips to `yuv420p`, dropping alpha. | **error** for alpha ≠ `FF` |
-| `speed.affect_audio: false` | Possible via `AudioSpeed(1)`, but the sound is then longer/shorter than the clip and is not trimmed/padded, which breaks sequence timing. | **error** |
+| `position`, `anchor`, `size` with non-default values (video, image, color clips) | Known bug **#2**: ignored; `overlay` always at 0,0 and every clip is fitted to the canvas. | **error** while bug #2 is open, one per clip listing the fields: `clip "c_logo": position, anchor and size are not supported yet (known bug #2)`. Default values (centred, full-canvas contain) are fine. |
+| `size.fit: "cover"` / `"stretch"` | Not implemented (clips are always contained). | **error** (covered by the `size` error above) |
+| `output.fit: "cover"` | Not implemented (`CompileProfile` always contains). | **error** when resolving the render target: `output: fit "cover" is not supported yet` (pointer `/output/fit`) |
+| **Text clips** (any track) | drawtext is given no `x`/`y`, so text is always drawn at the **top-left corner**, while the format's default is centred (known bug #2). | **error**: `clip "c_title": text clips are not supported yet: text is always drawn at the top-left corner (known bug #2)` |
+| `text.style.font.family` | `TextStyle` only has a font file; drawtext's `font=` (fontconfig) is not used. | **error**: `clip "c_title": style.font.family is not supported yet (use style.font.file)` |
+| `text.style.box`, `outline` | `TextStyle.Background/BorderWidth/BorderColor/BoxPadding` exist but the compiler ignores them. | **error**: `clip "c_title": style.box is not supported yet` (same for `style.outline`) |
+| `text.style.align`, `direction: "ltr"/"rtl"` | Not supported (drawtext auto-detects direction; no alignment option). `auto`/`center` defaults are fine. | **error** for non-default values: `clip "c1": style.align "left" is not supported yet` (same for `style.direction`) |
+| `text.style.size`, `color`, `font.file` | Supported (size converted to px) — once text clips render. | — |
+| Colors with alpha (`#RRGGBBAA`) on `color` clips | The compiler converts generated clips to `yuv420p`, dropping alpha. | **error** for alpha ≠ `FF`: `clip "c1": color "#00000080" has transparency, which is not supported yet` |
+| `speed.affect_audio: false` | Possible via `AudioSpeed(1)`, but the sound is then longer/shorter than the clip and is not trimmed/padded, which breaks sequence timing. | **error**: `clip "c_beach": speed.affect_audio false is not supported yet` |
 | Fades on the sound of `video` clips | Supported (bug #7). | — |
 | Fades on sped-up clips | Supported (bug #12). | — |
 | `enabled: false` | Loader-only. | — |
@@ -572,9 +614,10 @@ mismatches are warnings.
 When bugs #1/#2 and the other gaps are fixed, the corresponding rows switch to
 "supported" and the loader stops rejecting them; no format change is needed.
 Of the examples, `simple-trim-concat.json` and `podcast-audio.json` render with
-today's library; `reel-arabic-overlay.json` (overlays, layout, font family,
-box, cover) and `effects-transitions.json` (transitions, `affect_audio: false`)
-will be rejected with the errors above until those gaps close.
+today's library; `reel-arabic-overlay.json` (overlays, layout, text) and
+`effects-transitions.json` (transitions, `affect_audio: false`) load fine but
+fail `Build` with the errors above until those gaps close (the exact lists are
+asserted in `project/build_test.go`).
 
 ---
 
@@ -623,7 +666,7 @@ Decided during review of the phase 3a design (PRs #2 and its follow-up).
 | 6 | Text size | Fraction of canvas height. |
 | 7 | Default size of upper-track clips | Full canvas, `contain` (matches today's library). |
 | 8 | Missing media file | Warning on load, error on render. |
-| 9 | Features the library can't render yet | Strict load errors (§14). |
+| 9 | Features the library can't render yet | Strict errors (§14), raised at render time (`Build`) so such projects can still be loaded and edited (refined in phase 3b). |
 | 10 | `format` in audio-only projects | Always required. |
 | 11 | Transitions on audio tracks | Allowed. |
 | 12 | `speed.affect_audio: false` | Sound at normal speed, cut at the clip end (or ending early when slowed). |
@@ -632,3 +675,27 @@ Decided during review of the phase 3a design (PRs #2 and its follow-up).
 | 15 | File naming | `*.gomontage.json`. |
 | 16 | Schema validation in the loader | Loader embeds the schema and validates every file with it first; the schema is the single source of truth for shape (§12). |
 | 17 | Gap/background color | Deferred (gaps are black on the bottom track). |
+
+---
+
+## 18. Go API
+
+Package `github.com/ahmedhodiani/gomontage/project` (phase 3b):
+
+| Function | Purpose |
+|---|---|
+| `Load(path) (*Project, []Warning, error)` | Read a file: schema validation (embedded `schema.ProjectV1`), then loader rules; returns all problems in a `*ValidationError`. |
+| `Parse(data, dir)` | Like `Load` for in-memory JSON; `dir` is where relative paths are resolved. |
+| `New(dir, Format) *Project` | An empty project. |
+| `Validate(p) ([]Warning, error)` | Check a project built or edited in Go exactly like `Load`. |
+| `Save(path, p) error` / `Marshal(p)` | Canonical, byte-stable output (§1); rebases relative paths when saved to another directory. |
+| `Build(p) (*timeline.Timeline, error)` | Validate + render-time checks (L8, L9, L12, L13), then build the timeline from the cached probe data. |
+| `RenderTarget(p, preset, path)` | Resolve the export profile and output file (with per-render overrides). |
+| `ImportMedia(p, path) (id, error)` | Probe a file once and add it to the media bin with a generated unique ID (`m_<file stem>`). |
+| `PresetProfile(name)`, `Presets()` | Output presets (§11). |
+
+In the Go types a field's zero value always means its default (pointers where
+the default isn't zero, e.g. a nil `Clip.Volume` is 1); accessors such as
+`Clip.VolumeValue()` return resolved values. `Load` canonicalizes explicitly
+written defaults to zero values, so `Load → Save → Load` gives an identical
+struct.
