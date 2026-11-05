@@ -606,3 +606,29 @@ will be rejected with the errors above until those gaps close.
 | [`reel-arabic-overlay.json`](../examples/reel-arabic-overlay.json) | 9:16 reel, Arabic text with box, logo overlay, music with `volume`, `cover` | no (§14) |
 | [`podcast-audio.json`](../examples/podcast-audio.json) | Audio-only WAV, sound from a video file, normalize, disabled track, `meta` | yes |
 | [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades (video and audio tracks), color clip, normalize + `volume` | no (§14) |
+
+---
+
+## 17. Design decisions (v1)
+
+Decided during review of the phase 3a design (PRs #2 and its follow-up).
+
+| # | Question | Decision |
+|---|---|---|
+| 1 | ID uniqueness scope | Global across media, tracks and clips. |
+| 2 | `media` shape | Array of entries with `id` (same shape as tracks/clips). |
+| 3 | Transition model | **Handle model**: butt-joined clips, transition centred on the cut, handles from source beyond in/out (§9). |
+| 4 | Volume | Clip field `volume` (linear, default 1) next to the fades; no volume effect. |
+| 5 | Volume units | Linear gain. |
+| 6 | Text size | Fraction of canvas height. |
+| 7 | Default size of upper-track clips | Full canvas, `contain` (matches today's library). |
+| 8 | Missing media file | Warning on load, error on render. |
+| 9 | Features the library can't render yet | Strict load errors (§14). |
+| 10 | `format` in audio-only projects | Always required. |
+| 11 | Transitions on audio tracks | Allowed. |
+| 12 | `speed.affect_audio: false` | Sound at normal speed, cut at the clip end (or ending early when slowed). |
+| 13 | Output | Single `output`, preset only (no overrides) in v1. |
+| 14 | fps | Number (loader maps 29.97/59.94/23.976 to exact NTSC rates when supported). |
+| 15 | File naming | `*.gomontage.json`. |
+| 16 | Schema validation in the loader | Loader embeds the schema and validates every file with it first; the schema is the single source of truth for shape (§12). |
+| 17 | Gap/background color | Deferred (gaps are black on the bottom track). |
