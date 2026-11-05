@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 
 	"github.com/ahmedhodiani/gomontage/project"
@@ -12,14 +11,15 @@ func validateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate [project.gomontage.json]",
 		Short: "Validate a project file, or the current project structure",
-		Long: `With a project file argument: loads the file (JSON Schema and loader rules),
-then runs the render-time checks, and prints one line per problem with its
-JSON path:
+		Long: `With a project file argument: checks the file and prints, with JSON paths,
 
-  error: /tracks/0/clips/2: clip "c3": media "m9" does not exist
-  warning: /media/1: media "m_music": file not found: media/music.mp3
+  Project errors   the file is invalid (JSON Schema, loader rules)
+  Render blockers  the file is valid but can't be rendered yet (missing
+                   media, features the library doesn't support yet)
+  Warnings         informational (stale probes, unused missing media, ...)
 
-The last line is a summary. Exits with status 1 if there are errors.
+followed by a summary line. Exits with status 1 if there are project errors
+or render blockers.
 
 Without an argument: checks that the current directory is a valid Gomontage
 project (gomontage.yaml exists and is valid).`,
@@ -47,62 +47,46 @@ project (gomontage.yaml exists and is valid).`,
 	}
 }
 
-// validateProjectFile prints every load problem, warning and render problem
-// of a project file to stdout, one per line, then a summary.
+// validateProjectFile prints the check result of a project file in two
+// separate sections — project errors (schema, loader rules) and render
+// blockers (missing media, known gaps) — plus warnings and a summary line.
+// It returns an error (exit status 1) if either section is non-empty.
 func validateProjectFile(cmd *cobra.Command, path string) error {
 	out := cmd.OutOrStdout()
-	var problems []project.Problem
-
-	collect := func(err error) error {
-		var ve *project.ValidationError
-		if errors.As(err, &ve) {
-			problems = append(problems, ve.Problems...)
-			return nil
-		}
+	r, _, err := project.CheckFile(path)
+	if err != nil {
 		return err
 	}
 
-	p, warnings, err := project.Load(path)
-	if err != nil {
-		if err := collect(err); err != nil {
-			return err // unreadable file etc.
+	section := func(title string, problems []project.Problem) {
+		if len(problems) == 0 {
+			fmt.Fprintf(out, "%s: none\n", title)
+			return
 		}
+		fmt.Fprintf(out, "%s (%d):\n", title, len(problems))
+		for _, p := range problems {
+			fmt.Fprintf(out, "  %s\n", p)
+		}
+	}
+	section("Project errors", r.ProjectErrors)
+	if r.RenderChecked {
+		section("Render blockers", r.RenderBlockers)
 	} else {
-		// Render-time checks: missing media, fonts, known gaps.
-		if _, err := project.Build(p); err != nil {
-			if err := collect(err); err != nil {
-				return err
-			}
-		}
-		if p.Output != nil {
-			if _, _, err := project.RenderTarget(p, "", ""); err != nil {
-				if err := collect(err); err != nil {
-					problems = append(problems, project.Problem{Path: "/output", Message: err.Error()})
-				}
-			}
-		}
+		fmt.Fprintln(out, "Render blockers: not checked (fix the project errors first)")
 	}
+	section("Warnings", r.Warnings)
 
-	// A missing media file is a load warning and a render error; report it
-	// once, as the error.
-	isError := map[string]bool{}
-	for _, pr := range problems {
-		isError[pr.String()] = true
-		fmt.Fprintf(out, "error: %s\n", pr)
+	counts := fmt.Sprintf("%s, %s, %s", plural(len(r.ProjectErrors), "project error"),
+		plural(len(r.RenderBlockers), "render blocker"), plural(len(r.Warnings), "warning"))
+	switch {
+	case len(r.ProjectErrors) > 0:
+		fmt.Fprintf(out, "%s: invalid (%s)\n", path, counts)
+		return fmt.Errorf("%s is not a valid project", path)
+	case len(r.RenderBlockers) > 0:
+		fmt.Fprintf(out, "%s: valid but cannot be rendered yet (%s)\n", path, counts)
+		return fmt.Errorf("%s cannot be rendered", path)
 	}
-	kept := warnings[:0:0]
-	for _, w := range warnings {
-		if !isError[w.String()] {
-			kept = append(kept, w)
-			fmt.Fprintf(out, "warning: %s\n", w)
-		}
-	}
-	warnings = kept
-	if len(problems) > 0 {
-		fmt.Fprintf(out, "%s: %s, %s\n", path, plural(len(problems), "error"), plural(len(warnings), "warning"))
-		return fmt.Errorf("%s is not valid", path)
-	}
-	fmt.Fprintf(out, "%s: valid, %s\n", path, plural(len(warnings), "warning"))
+	fmt.Fprintf(out, "%s: OK (%s)\n", path, counts)
 	return nil
 }
 
