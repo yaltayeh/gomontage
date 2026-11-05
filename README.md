@@ -111,6 +111,16 @@ Writes a full markdown API reference and guides into the `docs/` directory.
 
 ---
 
+## Project files (design)
+
+A JSON project format that describes a whole edit (media bin, tracks, clips,
+effects, output) is specified in [docs/project-format.md](docs/project-format.md),
+with a JSON Schema in [`schema/`](schema/project.v1.schema.json) and examples in
+[`examples/`](examples/). The loader that turns a project file into a
+`timeline.Timeline` is not implemented yet.
+
+---
+
 ## Output size
 
 The timeline size is the composition canvas. If the export profile sets a
