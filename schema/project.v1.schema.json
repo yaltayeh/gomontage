@@ -1,0 +1,1126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yaltayeh/gomontage/schema/project.v1.schema.json",
+  "title": "GoMontage project (version 1)",
+  "description": "A complete GoMontage video editing project: the output format, the media bin, the tracks with their clips, and the render settings. All times are integer milliseconds. All paths are relative to the directory containing the project file. Every media entry, track and clip has a stable string ID that tools use to refer to it; IDs are unique across the whole project. See docs/project-format.md for the full specification, including rules this schema cannot express (ID uniqueness, references, overlaps).",
+  "type": "object",
+  "required": [
+    "version",
+    "format",
+    "media",
+    "tracks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": {
+      "description": "Optional reference to this JSON Schema, for editors. Ignored by GoMontage.",
+      "type": "string"
+    },
+    "version": {
+      "description": "Format version. Always 1 for this schema. Loaders reject unknown versions; future versions will come with a migration.",
+      "const": 1
+    },
+    "name": {
+      "description": "Human-readable project name. Used as the default output file name when output.path is not set by the caller.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "format": {
+      "$ref": "#/$defs/format"
+    },
+    "media": {
+      "description": "The media bin: every source file used by the project, probed once at import. Clips refer to media entries by ID. Entries that no clip uses are allowed (imported but not placed yet).",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/media"
+      }
+    },
+    "tracks": {
+      "description": "The tracks, in layer order. Video tracks are composited bottom-up: the first video track in this array is the bottom layer, each later video track is drawn on top of the previous ones. All audio tracks (and the sound of video clips) are mixed together; the relative order of audio tracks does not matter.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/track"
+      }
+    },
+    "output": {
+      "$ref": "#/$defs/output"
+    },
+    "meta": {
+      "description": "Free-form data for tools (notes, editor state, tags). GoMontage stores and returns it unchanged and never interprets it.",
+      "type": "object"
+    }
+  },
+  "$defs": {
+    "id": {
+      "description": "A stable identifier: 1-64 characters, starting with a letter or digit, then letters, digits, '_', '-' or '.'. Unique across the whole project (media, tracks and clips share one namespace). Tools refer to items by ID, so IDs never change once assigned.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+    },
+    "ms": {
+      "description": "A time or duration in integer milliseconds, >= 0.",
+      "type": "integer",
+      "minimum": 0
+    },
+    "positiveMs": {
+      "description": "A duration in integer milliseconds, >= 1.",
+      "type": "integer",
+      "minimum": 1
+    },
+    "relativePath": {
+      "description": "A file path relative to the directory containing the project file, using '/' as separator (e.g. \"media/intro.mp4\" or \"../shared/logo.png\"). Absolute paths (starting with '/' or '\\\\', or a drive letter like \"C:\") are not allowed.",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^/\\\\]([^:].*)?$"
+    },
+    "color": {
+      "description": "A color as \"#RRGGBB\" or \"#RRGGBBAA\" (hex; AA is alpha, FF = opaque).",
+      "type": "string",
+      "pattern": "^#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$"
+    },
+    "format": {
+      "description": "The composition canvas: every visual clip is laid out on a canvas of this size and the timeline runs at this frame rate. The output may be scaled to a preset size afterwards (see output.fit).",
+      "type": "object",
+      "required": [
+        "width",
+        "height",
+        "fps"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "width": {
+          "description": "Canvas width in pixels. Even number (required by common video encoders), 16-8192. Example: 1920 for 16:9 HD, 1080 for a 9:16 reel.",
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 8192,
+          "multipleOf": 2
+        },
+        "height": {
+          "description": "Canvas height in pixels. Even number, 16-8192. Example: 1080 for 16:9 HD, 1920 for a 9:16 reel.",
+          "type": "integer",
+          "minimum": 16,
+          "maximum": 8192,
+          "multipleOf": 2
+        },
+        "fps": {
+          "description": "Timeline frame rate in frames per second (e.g. 24, 25, 30, 29.97, 60). Every video clip is converted to this rate.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 240
+        }
+      }
+    },
+    "media": {
+      "description": "One source file in the media bin. The probe results are stored so the project can be rebuilt without re-probing; tools must re-probe (and update this entry) when the file changes.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "path",
+        "probe"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "description": "What the file is: \"video\" (has a picture stream, may have sound), \"audio\" (sound only) or \"image\" (a still picture such as PNG/JPEG).",
+          "enum": [
+            "video",
+            "audio",
+            "image"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "probe": {
+          "$ref": "#/$defs/probe"
+        },
+        "fingerprint": {
+          "description": "Optional file fingerprint recorded at probe time. If the file's current size or modification time differs, the stored probe is stale: loaders warn and tools should re-probe.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "size_bytes": {
+              "description": "File size in bytes when probed.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "modified_unix_ms": {
+              "description": "File modification time when probed, in milliseconds since the Unix epoch.",
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "video"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "probe": {
+                "required": [
+                  "duration_ms",
+                  "has_video",
+                  "has_audio",
+                  "width",
+                  "height",
+                  "fps"
+                ],
+                "properties": {
+                  "has_video": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "audio"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "probe": {
+                "required": [
+                  "duration_ms",
+                  "has_audio"
+                ],
+                "properties": {
+                  "has_audio": {
+                    "const": true
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "image"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "probe": {
+                "required": [
+                  "width",
+                  "height"
+                ]
+              }
+            }
+          }
+        }
+      ]
+    },
+    "probe": {
+      "description": "Stream information measured with ffprobe when the media was imported. Which fields are required depends on the media kind: video needs duration_ms, has_video, has_audio, width, height and fps; audio needs duration_ms and has_audio; image needs width and height.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "duration_ms": {
+          "description": "Length of the file in milliseconds.",
+          "$ref": "#/$defs/ms"
+        },
+        "has_video": {
+          "description": "Whether the file has a picture stream.",
+          "type": "boolean"
+        },
+        "has_audio": {
+          "description": "Whether the file has a sound stream.",
+          "type": "boolean"
+        },
+        "width": {
+          "description": "Picture width in pixels (first video stream).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "height": {
+          "description": "Picture height in pixels (first video stream).",
+          "type": "integer",
+          "minimum": 1
+        },
+        "fps": {
+          "description": "Source frame rate in frames per second (first video stream). Informational: clips are always converted to format.fps.",
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "sample_rate": {
+          "description": "Audio sample rate in Hz (first audio stream). Informational.",
+          "type": "integer",
+          "minimum": 1
+        },
+        "channels": {
+          "description": "Number of audio channels (first audio stream). Informational.",
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "track": {
+      "description": "A track holds clips of one kind. On a video track, clips must not overlap in time, except where a clip's transition_in overlaps the previous clip by exactly the transition duration. On an audio track, clips may overlap freely; overlapping sound is mixed.",
+      "type": "object",
+      "required": [
+        "id",
+        "kind",
+        "clips"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "kind": {
+          "description": "\"video\" tracks hold video, image, text and color clips (pictures, plus the sound of video clips). \"audio\" tracks hold audio clips only.",
+          "enum": [
+            "video",
+            "audio"
+          ]
+        },
+        "name": {
+          "description": "Optional human-readable name, e.g. \"main\", \"titles\", \"music\".",
+          "type": "string",
+          "maxLength": 200
+        },
+        "enabled": {
+          "description": "Whether the track is rendered. A disabled track is kept in the project but contributes neither picture nor sound. Default true.",
+          "type": "boolean",
+          "default": true
+        },
+        "clips": {
+          "description": "The clips on this track. Order in the array does not matter for rendering (clips are placed by at_ms), but tools should keep them sorted by at_ms.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/clip"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "audio"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "clips": {
+                "items": {
+                  "properties": {
+                    "type": {
+                      "const": "audio",
+                      "description": "Audio tracks accept only clips of type \"audio\"."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "video"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "clips": {
+                "items": {
+                  "properties": {
+                    "type": {
+                      "enum": [
+                        "video",
+                        "image",
+                        "text",
+                        "color"
+                      ],
+                      "description": "Video tracks accept clips of type \"video\", \"image\", \"text\" or \"color\". To use only the sound of a video file, put an \"audio\" clip referencing it on an audio track."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "clip": {
+      "description": "One clip on a track. The \"type\" field selects which other fields apply: video and audio clips play a window [in_ms, out_ms) of a media file; image, text and color clips last duration_ms. Fades (fade_in_ms, fade_out_ms) affect both picture and sound.",
+      "type": "object",
+      "required": [
+        "id",
+        "type",
+        "at_ms"
+      ],
+      "properties": {
+        "type": {
+          "description": "Clip type: \"video\" (part of a video file, on a video track), \"audio\" (sound of an audio or video file, on an audio track), \"image\" (a still picture), \"text\" (rendered text) or \"color\" (a solid color).",
+          "enum": [
+            "video",
+            "audio",
+            "image",
+            "text",
+            "color"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "video"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/videoClip"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "audio"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/audioClip"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "image"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/imageClip"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "text"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/textClip"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "color"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/colorClip"
+          }
+        }
+      ]
+    },
+    "textStyle": {
+      "description": "How the text looks. Every field is optional.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "font": {
+          "description": "The font: either {\"family\": \"Noto Sans Arabic\"} (an installed font, looked up by name) or {\"file\": \"fonts/MyFont.ttf\"} (a font file, path relative to the project). Default: the system's default sans-serif font. For Arabic and other non-Latin scripts, choose a font that contains those letters.",
+          "type": "object",
+          "additionalProperties": false,
+          "minProperties": 1,
+          "maxProperties": 1,
+          "properties": {
+            "family": {
+              "description": "Installed font family name, e.g. \"Tahoma\" or \"Noto Sans Arabic\".",
+              "type": "string",
+              "minLength": 1
+            },
+            "file": {
+              "description": "Font file (.ttf/.otf), relative to the project.",
+              "$ref": "#/$defs/relativePath"
+            }
+          }
+        },
+        "size": {
+          "description": "Font size as a fraction of the canvas height (e.g. 0.05 = 5% of the height: 54 px on a 1080-high canvas). Relative so text keeps its proportions when the format changes. Default 0.05.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 1,
+          "default": 0.05
+        },
+        "color": {
+          "description": "Text color. Default \"#FFFFFF\" (white).",
+          "$ref": "#/$defs/color",
+          "default": "#FFFFFF"
+        },
+        "box": {
+          "description": "Optional background box behind the text.",
+          "type": "object",
+          "required": [
+            "color"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "description": "Box color, e.g. \"#000000AA\" for translucent black.",
+              "$ref": "#/$defs/color"
+            },
+            "padding": {
+              "description": "Space between the text and the box edge, as a fraction of the font size. Default 0.25.",
+              "type": "number",
+              "minimum": 0,
+              "maximum": 5,
+              "default": 0.25
+            }
+          }
+        },
+        "outline": {
+          "description": "Optional outline drawn around each letter, for readability on busy backgrounds.",
+          "type": "object",
+          "required": [
+            "color"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "color": {
+              "description": "Outline color.",
+              "$ref": "#/$defs/color"
+            },
+            "width": {
+              "description": "Outline thickness as a fraction of the font size. Default 0.05.",
+              "type": "number",
+              "exclusiveMinimum": 0,
+              "maximum": 1,
+              "default": 0.05
+            }
+          }
+        },
+        "align": {
+          "description": "Alignment of the lines of multi-line text within the text box. Default \"center\".",
+          "enum": [
+            "left",
+            "center",
+            "right"
+          ],
+          "default": "center"
+        },
+        "direction": {
+          "description": "Text direction. \"auto\" detects it from the text (Arabic and Hebrew become right-to-left). Default \"auto\".",
+          "enum": [
+            "auto",
+            "ltr",
+            "rtl"
+          ],
+          "default": "auto"
+        }
+      }
+    },
+    "transition": {
+      "description": "A transition from the previous clip on the same track into this clip. The two clips overlap by duration_ms: this clip's at_ms must equal the previous clip's end minus duration_ms. During the overlap the previous clip's picture and sound blend into this clip's. Not rendered yet by the current library (see docs/project-format.md, Known gaps).",
+      "type": "object",
+      "required": [
+        "type",
+        "duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Transition style. \"crossfade\": the pictures dissolve into each other and the sounds cross-fade.",
+          "enum": [
+            "crossfade"
+          ]
+        },
+        "duration_ms": {
+          "description": "Length of the transition (= the overlap with the previous clip), in milliseconds. Must not exceed either clip's duration.",
+          "$ref": "#/$defs/positiveMs"
+        }
+      }
+    },
+    "effects": {
+      "description": "Effects applied to the clip, in order. Each item has a \"type\" and that type's parameters; unknown types and unknown or invalid parameters are rejected. Each effect type may appear at most once per clip.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/effect"
+      },
+      "allOf": [
+        {
+          "contains": {
+            "properties": {
+              "type": {
+                "const": "speed"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "type": {
+                "const": "volume"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "properties": {
+              "type": {
+                "const": "normalize"
+              }
+            }
+          },
+          "minContains": 0,
+          "maxContains": 1
+        }
+      ]
+    },
+    "effect": {
+      "description": "One effect. \"speed\" changes playback speed (picture and sound), \"volume\" scales the loudness, \"normalize\" evens out loudness to a target.",
+      "type": "object",
+      "required": [
+        "type"
+      ],
+      "properties": {
+        "type": {
+          "description": "Effect type: \"speed\", \"volume\" or \"normalize\".",
+          "enum": [
+            "speed",
+            "volume",
+            "normalize"
+          ]
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "speed"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/speedEffect"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "volume"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/volumeEffect"
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "normalize"
+              }
+            }
+          },
+          "then": {
+            "$ref": "#/$defs/normalizeEffect"
+          }
+        }
+      ]
+    },
+    "speedEffect": {
+      "description": "Plays the clip faster or slower. The clip's timeline duration becomes round((out_ms - in_ms) / factor). By default the sound is retimed too (pitch preserved) so picture and sound stay in sync.",
+      "type": "object",
+      "required": [
+        "factor"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Effect type (see effect.type)."
+        },
+        "factor": {
+          "description": "Speed multiplier: 2 = twice as fast (half as long), 0.5 = half speed (slow motion). Range 0.1-10.",
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 10
+        },
+        "affect_audio": {
+          "description": "Whether the sound is retimed along with the picture. true (default): sound follows the picture, pitch preserved. false: sound plays at normal speed and is cut off at the end of the clip (or ends early when slowed down).",
+          "type": "boolean",
+          "default": true
+        }
+      }
+    },
+    "volumeEffect": {
+      "description": "Scales the clip's loudness.",
+      "type": "object",
+      "required": [
+        "gain"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Effect type (see effect.type)."
+        },
+        "gain": {
+          "description": "Linear volume multiplier: 1 = unchanged, 0.5 = half (about -6 dB), 2 = double (about +6 dB), 0 = silent. Range 0-10.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10
+        }
+      }
+    },
+    "normalizeEffect": {
+      "description": "Evens out the clip's loudness to a target level (EBU R128 loudness normalization).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "description": "Effect type (see effect.type)."
+        },
+        "target_lufs": {
+          "description": "Target integrated loudness in LUFS. -16 suits online video and podcasts, -23 is the broadcast standard. Range -70 to -5. Default -16.",
+          "type": "number",
+          "minimum": -70,
+          "maximum": -5,
+          "default": -16
+        }
+      }
+    },
+    "output": {
+      "description": "Default render settings. Tools may override them per render.",
+      "type": "object",
+      "required": [
+        "preset",
+        "path"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "preset": {
+          "description": "Render preset. Video: \"youtube_720p\" (1280x720 H.264), \"youtube_1080p\" (1920x1080 H.264), \"youtube_4k\" (3840x2160 H.264), \"reel\" (1080x1920 H.264), \"h265\" (canvas size, H.265), \"prores\" (canvas size, ProRes 422 MOV), \"gif\" (canvas size, animated GIF, no sound). Audio only: \"mp3\", \"wav\", \"flac\".",
+          "enum": [
+            "youtube_720p",
+            "youtube_1080p",
+            "youtube_4k",
+            "reel",
+            "h265",
+            "prores",
+            "gif",
+            "mp3",
+            "wav",
+            "flac"
+          ]
+        },
+        "path": {
+          "description": "Output file, relative to the project. Its extension must suit the preset (.mp4 or .mov for H.264/H.265, .mov for prores, .gif, .mp3, .wav, .flac).",
+          "$ref": "#/$defs/relativePath"
+        },
+        "fit": {
+          "description": "How the canvas is fitted when the preset has a fixed size that differs from format.width/height: \"contain\" scales the whole canvas to fit and adds black bars; \"cover\" scales it to fill the frame and crops the overflow. Ignored for presets without a fixed size. Default \"contain\".",
+          "enum": [
+            "contain",
+            "cover"
+          ],
+          "default": "contain"
+        }
+      }
+    },
+    "clipLabel": {
+      "description": "Optional human-readable label, e.g. \"intro\" or \"interview answer 2\".",
+      "type": "string",
+      "maxLength": 200
+    },
+    "atMs": {
+      "description": "Where the clip starts on the timeline, in milliseconds from the start of the project.",
+      "$ref": "#/$defs/ms"
+    },
+    "fadeInMs": {
+      "description": "Fade-in length in milliseconds at the start of the clip, applied to picture (from black, or from transparent on upper video tracks) and sound (from silence). 0 = no fade. fade_in_ms + fade_out_ms must not exceed the clip's timeline duration.",
+      "$ref": "#/$defs/ms",
+      "default": 0
+    },
+    "fadeOutMs": {
+      "description": "Fade-out length in milliseconds at the end of the clip, applied to picture and sound. 0 = no fade.",
+      "$ref": "#/$defs/ms",
+      "default": 0
+    },
+    "inMs": {
+      "description": "Start of the played window inside the source file, in milliseconds. Default 0.",
+      "$ref": "#/$defs/ms",
+      "default": 0
+    },
+    "outMs": {
+      "description": "End of the played window inside the source file, in milliseconds (exclusive). Must be greater than in_ms and at most the media's probe.duration_ms. Default: the end of the source. The clip lasts round((out_ms - in_ms) / speed factor) ms on the timeline.",
+      "$ref": "#/$defs/positiveMs"
+    },
+    "position": {
+      "description": "Where the clip's anchor point is placed, as fractions of the canvas: {\"x\": 0, \"y\": 0} is the top-left corner, {\"x\": 1, \"y\": 1} the bottom-right corner. Default {\"x\": 0.5, \"y\": 0.5} (centre).",
+      "type": "object",
+      "required": [
+        "x",
+        "y"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "x": {
+          "description": "Horizontal position, 0 (left edge) to 1 (right edge).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "y": {
+          "description": "Vertical position, 0 (top edge) to 1 (bottom edge).",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "anchor": {
+      "description": "Which point of the clip sits at position. E.g. anchor \"bottom\" with position {\"x\": 0.5, \"y\": 0.9} centres the clip horizontally with its bottom edge at 90% of the canvas height. Default \"center\".",
+      "enum": [
+        "top-left",
+        "top",
+        "top-right",
+        "left",
+        "center",
+        "right",
+        "bottom-left",
+        "bottom",
+        "bottom-right"
+      ],
+      "default": "center"
+    },
+    "size": {
+      "description": "Size of the clip as fractions of the canvas. Give width, height, or both. With only one, the other follows the clip's own aspect ratio. With both, \"fit\" decides how the picture fills the box. Default: the whole canvas with fit \"contain\" (the picture is as large as possible without cropping, with transparent space around it on upper tracks and black on the bottom track).",
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "width"
+          ]
+        },
+        {
+          "required": [
+            "height"
+          ]
+        }
+      ],
+      "properties": {
+        "width": {
+          "description": "Width as a fraction of the canvas width (e.g. 0.25 = a quarter of the canvas width). Up to 4 (zoomed in).",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 4
+        },
+        "height": {
+          "description": "Height as a fraction of the canvas height. Up to 4.",
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 4
+        },
+        "fit": {
+          "description": "How the picture fills a box given by both width and height: \"contain\" (whole picture visible, aspect ratio kept, may leave empty space), \"cover\" (box completely filled, aspect ratio kept, overflow cropped) or \"stretch\" (fills the box exactly, aspect ratio not kept). Ignored when only one of width/height is given. Default \"contain\".",
+          "enum": [
+            "contain",
+            "cover",
+            "stretch"
+          ],
+          "default": "contain"
+        }
+      }
+    },
+    "includeAudio": {
+      "description": "Whether the video file's sound is played with the picture. Set false to use the picture only (e.g. to replace the sound with music). Default true. Ignored if the media has no audio.",
+      "type": "boolean",
+      "default": true
+    },
+    "videoClip": {
+      "description": "Part of a video file, on a video track. Plays its picture and, unless include_audio is false, its sound.",
+      "type": "object",
+      "required": [
+        "media"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "description": "Clip type (see clip.type)."
+        },
+        "label": {
+          "$ref": "#/$defs/clipLabel"
+        },
+        "at_ms": {
+          "$ref": "#/$defs/atMs"
+        },
+        "fade_in_ms": {
+          "$ref": "#/$defs/fadeInMs"
+        },
+        "fade_out_ms": {
+          "$ref": "#/$defs/fadeOutMs"
+        },
+        "media": {
+          "description": "ID of the media entry to play; must be media of kind \"video\".",
+          "$ref": "#/$defs/id"
+        },
+        "in_ms": {
+          "$ref": "#/$defs/inMs"
+        },
+        "out_ms": {
+          "$ref": "#/$defs/outMs"
+        },
+        "include_audio": {
+          "$ref": "#/$defs/includeAudio"
+        },
+        "effects": {
+          "$ref": "#/$defs/effects"
+        },
+        "transition_in": {
+          "$ref": "#/$defs/transition"
+        },
+        "position": {
+          "$ref": "#/$defs/position"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "size": {
+          "$ref": "#/$defs/size"
+        }
+      }
+    },
+    "audioClip": {
+      "description": "Sound from an audio file, or from the sound stream of a video file, on an audio track.",
+      "type": "object",
+      "required": [
+        "media"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "description": "Clip type (see clip.type)."
+        },
+        "label": {
+          "$ref": "#/$defs/clipLabel"
+        },
+        "at_ms": {
+          "$ref": "#/$defs/atMs"
+        },
+        "fade_in_ms": {
+          "$ref": "#/$defs/fadeInMs"
+        },
+        "fade_out_ms": {
+          "$ref": "#/$defs/fadeOutMs"
+        },
+        "media": {
+          "description": "ID of the media entry whose sound is played: media of kind \"audio\", or of kind \"video\" with probe.has_audio true.",
+          "$ref": "#/$defs/id"
+        },
+        "in_ms": {
+          "$ref": "#/$defs/inMs"
+        },
+        "out_ms": {
+          "$ref": "#/$defs/outMs"
+        },
+        "transition_in": {
+          "$ref": "#/$defs/transition"
+        },
+        "effects": {
+          "$ref": "#/$defs/effects"
+        }
+      }
+    },
+    "imageClip": {
+      "description": "A still picture shown for duration_ms. PNG transparency is kept on upper video tracks.",
+      "type": "object",
+      "required": [
+        "media",
+        "duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "description": "Clip type (see clip.type)."
+        },
+        "label": {
+          "$ref": "#/$defs/clipLabel"
+        },
+        "at_ms": {
+          "$ref": "#/$defs/atMs"
+        },
+        "fade_in_ms": {
+          "$ref": "#/$defs/fadeInMs"
+        },
+        "fade_out_ms": {
+          "$ref": "#/$defs/fadeOutMs"
+        },
+        "media": {
+          "description": "ID of a media entry of kind \"image\".",
+          "$ref": "#/$defs/id"
+        },
+        "duration_ms": {
+          "description": "How long the image is shown, in milliseconds.",
+          "$ref": "#/$defs/positiveMs"
+        },
+        "transition_in": {
+          "$ref": "#/$defs/transition"
+        },
+        "position": {
+          "$ref": "#/$defs/position"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "size": {
+          "$ref": "#/$defs/size"
+        }
+      }
+    },
+    "textClip": {
+      "description": "Rendered text shown for duration_ms. Supports any Unicode text, including right-to-left scripts such as Arabic (shaped with HarfBuzz/FriBidi). The text box is placed with position/anchor; its size comes from the font size.",
+      "type": "object",
+      "required": [
+        "text",
+        "duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "description": "Clip type (see clip.type)."
+        },
+        "label": {
+          "$ref": "#/$defs/clipLabel"
+        },
+        "at_ms": {
+          "$ref": "#/$defs/atMs"
+        },
+        "fade_in_ms": {
+          "$ref": "#/$defs/fadeInMs"
+        },
+        "fade_out_ms": {
+          "$ref": "#/$defs/fadeOutMs"
+        },
+        "text": {
+          "description": "The text to show, exactly as written (no escaping needed; every character is literal). Use \"\\n\" for a line break.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2000
+        },
+        "duration_ms": {
+          "description": "How long the text is shown, in milliseconds.",
+          "$ref": "#/$defs/positiveMs"
+        },
+        "style": {
+          "$ref": "#/$defs/textStyle"
+        },
+        "transition_in": {
+          "$ref": "#/$defs/transition"
+        },
+        "position": {
+          "$ref": "#/$defs/position"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        }
+      }
+    },
+    "colorClip": {
+      "description": "A solid color, e.g. a background or a gap filler. Fills the whole canvas unless size is given.",
+      "type": "object",
+      "required": [
+        "color",
+        "duration_ms"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/id"
+        },
+        "type": {
+          "description": "Clip type (see clip.type)."
+        },
+        "label": {
+          "$ref": "#/$defs/clipLabel"
+        },
+        "at_ms": {
+          "$ref": "#/$defs/atMs"
+        },
+        "fade_in_ms": {
+          "$ref": "#/$defs/fadeInMs"
+        },
+        "fade_out_ms": {
+          "$ref": "#/$defs/fadeOutMs"
+        },
+        "color": {
+          "$ref": "#/$defs/color"
+        },
+        "duration_ms": {
+          "description": "How long the color is shown, in milliseconds.",
+          "$ref": "#/$defs/positiveMs"
+        },
+        "transition_in": {
+          "$ref": "#/$defs/transition"
+        },
+        "position": {
+          "$ref": "#/$defs/position"
+        },
+        "anchor": {
+          "$ref": "#/$defs/anchor"
+        },
+        "size": {
+          "$ref": "#/$defs/size"
+        }
+      }
+    }
+  }
+}
