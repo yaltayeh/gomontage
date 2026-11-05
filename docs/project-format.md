@@ -512,10 +512,34 @@ at-most-once effects, integer times.
 
 Warnings never block loading; `Load` returns them alongside the project.
 
-"On render" means `project.Build` (and therefore `gomontage render` and
-`gomontage validate <file>`). Build also validates its input like Load, so
+**Project errors vs render blockers.** Problems fall into two groups,
+reported separately by `project.Check` / `project.CheckFile` (`CheckResult`)
+and by `gomontage validate <file>`:
+
+| Group | Rules | Meaning |
+|---|---|---|
+| **Project errors** | schema, L1–L7, L14 | The file is invalid; it can't be loaded, built or saved until fixed. |
+| **Render blockers** | L8 (media used by enabled clips), L9, L12, L13 (including `output.fit: "cover"`) | The file is valid and can be loaded, edited and saved, but can't be rendered now. Only checked when there are no project errors. |
+
+Warnings (L8 for media not used by enabled clips, L10, L11) never block
+anything; a missing media file that is a render blocker is not repeated as a
+warning. `project.Build` returns the project errors, or else the render
+blockers, as a `*ValidationError`; it also validates its input like Load, so
 projects built or edited in Go get the same checks. L7 also applies to
-per-render overrides of the preset/output file.
+per-render overrides of the preset/output file (`RenderTarget`).
+
+`gomontage validate <file>` prints:
+
+```
+Project errors: none
+Render blockers (2):
+  /media/0: media "m_intro": file not found: media/intro.mp4
+  /tracks/0/clips/2/transition_in: clip "c_beach": transition_in is not supported yet
+Warnings: none
+my.gomontage.json: valid but cannot be rendered yet (0 project errors, 2 render blockers, 0 warnings)
+```
+
+and exits with status 1 if either error section is non-empty.
 
 ### 12.3 Messages
 
@@ -687,7 +711,8 @@ Package `github.com/ahmedhodiani/gomontage/project` (phase 3b):
 | `Load(path) (*Project, []Warning, error)` | Read a file: schema validation (embedded `schema.ProjectV1`), then loader rules; returns all problems in a `*ValidationError`. |
 | `Parse(data, dir)` | Like `Load` for in-memory JSON; `dir` is where relative paths are resolved. |
 | `New(dir, Format) *Project` | An empty project. |
-| `Validate(p) ([]Warning, error)` | Check a project built or edited in Go exactly like `Load`. |
+| `Validate(p) ([]Warning, error)` | Check a project built or edited in Go exactly like `Load` (project errors only). |
+| `Check(p) *CheckResult` / `CheckFile(path)` | Project errors, render blockers and warnings, separately (§12). |
 | `Save(path, p) error` / `Marshal(p)` | Canonical, byte-stable output (§1); rebases relative paths when saved to another directory. |
 | `Build(p) (*timeline.Timeline, error)` | Validate + render-time checks (L8, L9, L12, L13), then build the timeline from the cached probe data. |
 | `RenderTarget(p, preset, path)` | Resolve the export profile and output file (with per-render overrides). |
@@ -696,6 +721,13 @@ Package `github.com/ahmedhodiani/gomontage/project` (phase 3b):
 
 In the Go types a field's zero value always means its default (pointers where
 the default isn't zero, e.g. a nil `Clip.Volume` is 1); accessors such as
-`Clip.VolumeValue()` return resolved values. `Load` canonicalizes explicitly
+`Clip.VolumeValue()` return resolved values. Explicit values equal to Go's
+zero but different from the format default are kept: `Enabled`,
+`IncludeAudio`, `Volume`, `Position`, `Effect.AffectAudio` and
+`TextBox.Padding` are pointers, so `volume: 0` (muted), `enabled: false`,
+`include_audio: false`, `position: {0, 0}`, `affect_audio: false` and
+`padding: 0` survive Load → Build → Save → Load. The other fields with a
+non-zero default (`target_lufs`, `style.size`, `outline.width`, `out_ms`, and
+the enum/color strings) can't hold a zero: the schema rejects it. `Load` canonicalizes explicitly
 written defaults to zero values, so `Load → Save → Load` gives an identical
 struct.

@@ -120,7 +120,7 @@ with a JSON Schema in [`schema/`](schema/project.v1.schema.json) and examples
 in [`examples/`](examples/).
 
 ```bash
-gomontage validate examples/simple-trim-concat.json   # errors/warnings with JSON paths
+gomontage validate examples/simple-trim-concat.json   # project errors, render blockers, warnings
 gomontage render my-edit.gomontage.json               # render with the project's output preset
 gomontage render my-edit.gomontage.json -o out.wav --preset wav
 ```
