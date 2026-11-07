@@ -21,6 +21,10 @@ plain `go test ./...` stays fast and never calls FFmpeg.
   not `engine.Probe`), `pixelAt` / `assertPixel` (extract the frame at time T,
   read RGB at (x,y) with tolerance), `audioLevel` (volumedetect over a time
   window), `assertDuration` (±1.5 frames, min 40ms).
+- Text tests use the committed font `testdata/fonts/ElMessiri.ttf` (OFL; the
+  one binary fixture), by file and — through a generated fontconfig
+  configuration (`FONTCONFIG_FILE`) — by family name, so results don't depend
+  on the fonts installed.
 - Renders use `testProfile()` (`mpeg4` + native `aac`), which every FFmpeg
   build has. Tests that need optional pieces (`libx264`, `libx265`,
   `libmp3lame`, the `drawtext` filter) skip with a message naming what is
@@ -54,8 +58,8 @@ it becomes a permanent regression test.
 
 | # | Bug | Status |
 |---|---|---|
-| 1 | Overlay tracks are opaque black outside their content (gaps, tail, pad, text background) | open |
-| 2 | `WithPosition` / `WithSize` / `TextStyle.Position` are ignored | open |
+| 1 | Overlay tracks are opaque black outside their content (gaps, tail, pad, text background) | fixed |
+| 2 | `WithPosition` / `WithSize` / `TextStyle.Position` are ignored | fixed |
 | 3 | `drawtext` text is not escaped | fixed |
 | 4 | A timeline with only generated clips fails ("graph has no inputs") | fixed |
 | 5 | Timeline FPS is not applied to file clips | fixed |

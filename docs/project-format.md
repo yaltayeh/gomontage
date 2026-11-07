@@ -309,14 +309,21 @@ All fields optional.
 | `box` | `{color, padding?}` | none | Background box. `padding` = fraction of font size (default 0.25). |
 | `outline` | `{color, width?}` | none | Letter outline. `width` = fraction of font size (default 0.05). |
 | `align` | `left`\|`center`\|`right` | `center` | Alignment of lines in multi-line text. |
-| `direction` | `auto`\|`ltr`\|`rtl` | `auto` | `auto` detects direction from the text (Arabic → RTL). |
+| `direction` | `auto`\|`ltr`\|`rtl` | `auto` | Paragraph direction. `auto`: FriBidi takes it from the first strong letter, so "قريباً" is RTL but a line starting with a Latin word ("Hello مرحبا") is LTR. `rtl`/`ltr` force it (applied per line with Unicode embedding marks), e.g. `rtl` displays "Hello مرحبا" as "مرحبا Hello". |
 
 RTL: text is shaped with HarfBuzz and reordered with FriBidi, which requires an
-FFmpeg built with `libharfbuzz` and `libfribidi` (`drawtext`). Verified in phase 2
-with `قريباً` and a Tahoma font (`e2e`, known bug #3 test).
+FFmpeg built with `libharfbuzz` and `libfribidi` (`drawtext`). drawtext has no
+font fallback: every character must exist in the chosen font (e.g. Noto Sans
+Arabic has no Latin letters, so a mixed Arabic/English line needs a font with
+both, such as El Messiri, which the tests use from `testdata/fonts`).
 
-Go API: `clip.NewText(text, clip.TextStyle{Font: file, Size: round(size·H), Color})`.
-See [Known gaps](#14-known-gaps-and-loader-behavior) for fields the compiler does not render yet.
+Placement: the text box — the text plus the box padding (with a box) or the
+outline width (without) — is placed with `position`/`anchor` like any clip.
+
+Go API: `clip.NewText(text, clip.TextStyle{…}).WithLayout(clip.Layout{…})`:
+`Size = round(size·H)`, `Font`/`FontFamily`, `Color`, `Background` (box color),
+`BoxPadding = round(padding·Size)`, `BorderWidth = max(1, round(width·Size))`,
+`BorderColor`, `Align` (`center` unless set), `Direction`.
 
 ---
 
@@ -362,8 +369,7 @@ Handle sizes in **source** time (speed effects scale them; round up):
 | `image`, `text`, `color` | — | unlimited (the still picture / text / color simply shows longer) |
 
 `speed` is the clip's `speed.factor` (1 without a speed effect). With
-`affect_audio: false` (not renderable yet, §14) the sound handle would use
-factor 1.
+`affect_audio: false` the sound handle uses factor 1.
 
 **Worked example** (`examples/effects-transitions.json`, cut into `c_beach` at
 11000 ms, `crossfade` 1000 ms → before = 500, after = 500):
@@ -420,7 +426,7 @@ and `audio` clips only. They are applied in list order.
 
 | Type | Params | Description | Go API |
 |---|---|---|---|
-| `speed` | `factor` (req, 0.1–10), `affect_audio` (bool, default `true`) | Plays faster (`2`) or slower (`0.5`). Timeline duration = source window / factor. With `affect_audio: true` the sound is retimed too (pitch preserved), keeping sync. With `false` the sound plays at normal speed and is cut at the clip end (or ends early when slowed). Not allowed with `affect_audio: false` on `audio` clips (meaningless). | video clip: `effects.SpeedUp(factor)` (audio follows automatically, fixed in bug #8). `affect_audio:false`: add `effects.AudioSpeed(1)` to suppress the automatic retiming (see gaps). audio clip: `effects.AudioSpeed(factor)`. |
+| `speed` | `factor` (req, 0.1–10), `affect_audio` (bool, default `true`) | Plays faster (`2`) or slower (`0.5`). Timeline duration = source window / factor. With `affect_audio: true` the sound is retimed too (pitch preserved), keeping sync. With `false` the sound plays at normal speed and is cut at the clip end (or ends early when slowed). Not allowed with `affect_audio: false` on `audio` clips (meaningless). | video clip: `effects.SpeedUp(factor)` (audio follows automatically, fixed in bug #8). `affect_audio:false`: `SpeedUp(factor).KeepAudioSpeed()`. audio clip: `effects.AudioSpeed(factor)`. |
 | `normalize` | `target_lufs` (−70 to −5, default −16) | EBU R128 loudness normalization. | `effects.NormalizeTo(target_lufs)` |
 
 There is no separate audio-speed effect (one way to change speed) and no fade
@@ -503,7 +509,7 @@ at-most-once effects, integer times.
 | L6 | `speed.affect_audio: false` only on `video` clips. | error |
 | L7 | `output.path` extension suits `output.preset`. | error |
 | L8 | Media file exists at `path`. | warning on load (every entry); error on render for media used by enabled clips (so tools can open a project and relink missing media) |
-| L9 | Font `file` exists. (Font `family` is a known gap, L13.) | error on render |
+| L9 | Font `file` exists; font `family` is installed (checked with fontconfig's `fc-list`, because FFmpeg would silently fall back to another font). | error on render |
 | L10 | Fingerprint differs from the file. | warning |
 | L11 | `volume ≠ 1` or a `normalize` effect on a clip that produces no sound (`include_audio: false`, or media without audio). | warning |
 | L12 | At least one enabled clip (for rendering). | error on render |
@@ -519,7 +525,7 @@ and by `gomontage validate <file>`:
 | Group | Rules | Meaning |
 |---|---|---|
 | **Project errors** | schema, L1–L7, L14 | The file is invalid; it can't be loaded, built or saved until fixed. |
-| **Render blockers** | L8 (media used by enabled clips), L9, L12, L13 (including `output.fit: "cover"`) | The file is valid and can be loaded, edited and saved, but can't be rendered now. Only checked when there are no project errors. |
+| **Render blockers** | L8 (media used by enabled clips), L9, L12, L13 (transitions) | The file is valid and can be loaded, edited and saved, but can't be rendered now. Only checked when there are no project errors. |
 
 Warnings (L8 for media not used by enabled clips, L10, L11) never block
 anything; a missing media file that is a render blocker is not repeated as a
@@ -563,6 +569,7 @@ the clip, or at the field when one field is at fault.
 | L7 | `/output/path` | `output: path "out/final.wav" has extension ".wav"; preset "youtube_1080p" needs .mp4 or .mov` (or `has no extension`) |
 | L8 | media | `media "m_x": file not found: media/x.mp4` (warning on load; error on render) |
 | L9 | `…/style/font/file` | `clip "c1": font file not found: fonts/x.ttf` |
+| L9 | `…/style/font/family` | `clip "c1": font family "No Such Font" is not installed (fontconfig can't find it)` (or `cannot check font family "…": fc-list not found (install fontconfig) (use style.font.file instead)`) |
 | L10 | media | `media "m_x": file changed since it was probed; re-import it` (warning) |
 | L11 | clip | `clip "c1": volume has no effect: the clip has no sound (include_audio is false)` — also `normalize has no effect`, and `(media "m_x" has no audio)` (warning) |
 | L12 | `/` | `project has no enabled clips to render` |
@@ -584,12 +591,13 @@ the clip, or at the field when one field is at fault.
 | `audio` clip, video media | `clip.NewVideoFromInfo(path, probe).AudioOnly()` (+ `.Trim`) on an `AudioTrack` |
 | `image` clip | `clip.NewImage(path).WithDuration(d)` |
 | `color` clip | `clip.NewColor(color, 0, 0).WithDuration(d)` |
-| `text` clip | `clip.NewText(text, clip.TextStyle{…}).WithDuration(d)` |
+| `text` clip | `clip.NewText(text, clip.TextStyle{…}).WithDuration(d)` (style mapping in §8) |
+| `position` / `anchor` / `size` | `.WithLayout(clip.Layout{X, Y, Anchor, Width, Height, Fit})` on video, image, color and text clips |
 | `at_ms` | `track.Add(c, at)`; clips are added in `at_ms` order |
 | `fade_in_ms` / `fade_out_ms` | `.WithFadeIn(d)` / `.WithFadeOut(d)` |
 | `volume` | `.WithVolume(v)` (only when ≠ 1) |
-| effects | §10 table |
-| `output.preset` | §11 table; render with `tl.Export(profile, path)` |
+| effects | §10 table; `speed` with `affect_audio: false` → `effects.SpeedUp(f).KeepAudioSpeed()` |
+| `output.preset` | §11 table; `output.fit` → `Profile.Fit`; render with `tl.Export(profile, path)` |
 | ms → Go | `time.Duration(ms) * time.Millisecond` (exact) |
 
 **Library additions** (done in phase 3b):
@@ -617,31 +625,24 @@ a tool or agent can remove or change it. Such projects still **load**, so they
 can be opened and edited. Purely informational mismatches are warnings.
 Messages below are exact; pointers are the clip, track or field named.
 
-| Format feature | Library status | Loader behavior until supported |
+| Format feature | Library status | Behavior |
 |---|---|---|
-| `transition_in` | Not implemented: no `xfade`/`acrossfade`, and the compiler can't yet read handle footage beyond a clip's in/out points. The L14 checks (placement, handles) still run first, so a project is only rejected for this once its transitions are otherwise valid. | **error**: `clip "c_beach": transition_in is not supported yet` |
-| Clips on upper video tracks (any video track after the first) | Known bug **#1**: upper tracks are opaque black outside their content (gaps, padding, text background). | **error** while bug #1 is open: `track "t_logo": overlay tracks are not supported yet (known bug #1)` |
-| `position`, `anchor`, `size` with non-default values (video, image, color clips) | Known bug **#2**: ignored; `overlay` always at 0,0 and every clip is fitted to the canvas. | **error** while bug #2 is open, one per clip listing the fields: `clip "c_logo": position, anchor and size are not supported yet (known bug #2)`. Default values (centred, full-canvas contain) are fine. |
-| `size.fit: "cover"` / `"stretch"` | Not implemented (clips are always contained). | **error** (covered by the `size` error above) |
-| `output.fit: "cover"` | Not implemented (`CompileProfile` always contains). | **error** when resolving the render target: `output: fit "cover" is not supported yet` (pointer `/output/fit`) |
-| **Text clips** (any track) | drawtext is given no `x`/`y`, so text is always drawn at the **top-left corner**, while the format's default is centred (known bug #2). | **error**: `clip "c_title": text clips are not supported yet: text is always drawn at the top-left corner (known bug #2)` |
-| `text.style.font.family` | `TextStyle` only has a font file; drawtext's `font=` (fontconfig) is not used. | **error**: `clip "c_title": style.font.family is not supported yet (use style.font.file)` |
-| `text.style.box`, `outline` | `TextStyle.Background/BorderWidth/BorderColor/BoxPadding` exist but the compiler ignores them. | **error**: `clip "c_title": style.box is not supported yet` (same for `style.outline`) |
-| `text.style.align`, `direction: "ltr"/"rtl"` | Not supported (drawtext auto-detects direction; no alignment option). `auto`/`center` defaults are fine. | **error** for non-default values: `clip "c1": style.align "left" is not supported yet` (same for `style.direction`) |
-| `text.style.size`, `color`, `font.file` | Supported (size converted to px) — once text clips render. | — |
-| Colors with alpha (`#RRGGBBAA`) on `color` clips | The compiler converts generated clips to `yuv420p`, dropping alpha. | **error** for alpha ≠ `FF`: `clip "c1": color "#00000080" has transparency, which is not supported yet` |
-| `speed.affect_audio: false` | Possible via `AudioSpeed(1)`, but the sound is then longer/shorter than the clip and is not trimmed/padded, which breaks sequence timing. | **error**: `clip "c_beach": speed.affect_audio false is not supported yet` |
+| `transition_in` | Not implemented: no `xfade`/`acrossfade`, and the compiler can't yet read handle footage beyond a clip's in/out points. The L14 checks (placement, handles) still run first, so a project is only rejected for this once its transitions are otherwise valid. | **render blocker**: `clip "c_beach": transition_in is not supported yet` (pointer `…/transition_in`) |
+| Clips on upper video tracks | Supported (phase 4, known bug #1 fixed): upper tracks are composited clip by clip with alpha; gaps, padding and text backgrounds are transparent. | — |
+| `position`, `anchor`, `size` (incl. `fit` contain/cover/stretch) | Supported (phase 4, known bug #2 fixed) on video, image, color and text clips, on any track. On the bottom track a clip that doesn't fill the canvas sits on black. | — |
+| `output.fit: "cover"` | Supported (phase 4): scale to fill the preset size, centre-crop. | — |
+| Text clips | Supported (phase 4): position/anchor (the text box, including box padding or outline, is anchored), size, color with alpha, `font.file` and `font.family` (fontconfig), `box`, `outline`, `align`, `direction`. | — |
+| Colors with alpha (`#RRGGBBAA`) | Supported (phase 4): blended with the layers beneath (with black on the bottom track). | — |
+| `speed.affect_audio: false` | Supported (phase 4): the sound plays at normal speed, cut at the clip end or followed by silence when slowed. | — |
 | Fades on the sound of `video` clips | Supported (bug #7). | — |
 | Fades on sped-up clips | Supported (bug #12). | — |
 | `enabled: false` | Loader-only. | — |
 
-When bugs #1/#2 and the other gaps are fixed, the corresponding rows switch to
-"supported" and the loader stops rejecting them; no format change is needed.
-Of the examples, `simple-trim-concat.json` and `podcast-audio.json` render with
-today's library; `reel-arabic-overlay.json` (overlays, layout, text) and
-`effects-transitions.json` (transitions, `affect_audio: false`) load fine but
-fail `Build` with the errors above until those gaps close (the exact lists are
-asserted in `project/build_test.go`).
+When transitions are implemented the last blocker goes away; no format change
+is needed. All examples load. `simple-trim-concat.json`, `podcast-audio.json`
+and `reel-arabic-overlay.json` render; `effects-transitions.json` fails `Build`
+only with its three `transition_in` blockers (asserted in
+`project/build_test.go`).
 
 ---
 
@@ -670,9 +671,9 @@ asserted in `project/build_test.go`).
 | File | Shows | Renders today? |
 |---|---|---|
 | [`simple-trim-concat.json`](../examples/simple-trim-concat.json) | Trim + back-to-back sequence, fades, fingerprint | yes |
-| [`reel-arabic-overlay.json`](../examples/reel-arabic-overlay.json) | 9:16 reel, Arabic text with box, logo overlay, music with `volume`, `cover` | no (§14) |
+| [`reel-arabic-overlay.json`](../examples/reel-arabic-overlay.json) | 9:16 reel, Arabic text with box and outline (El Messiri by family and by file), logo overlay, music with `volume`, `cover` | yes |
 | [`podcast-audio.json`](../examples/podcast-audio.json) | Audio-only WAV, sound from a video file, normalize, disabled track, `meta` | yes |
-| [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades (video and audio tracks), color clip, normalize + `volume` | no (§14) |
+| [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades (video and audio tracks), color clip, normalize + `volume` | no — transitions (§14) |
 
 ---
 

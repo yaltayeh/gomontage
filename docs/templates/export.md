@@ -65,7 +65,7 @@ size**:
 | Profile sets | Output |
 |---|---|
 | Neither width nor height (ProRes, H265, GIF, custom) | Timeline size |
-| Both | The composite is scaled to fit, aspect ratio preserved, with black bars if the aspect ratios differ |
+| Both | The composite is scaled to fit, aspect ratio preserved, with black bars if the aspect ratios differ (`Fit: "contain"`, the default) — or, with `Fit: "cover"` / `WithFit("cover")`, scaled to fill the frame and cropped |
 | Only one | The other is derived from the timeline's aspect ratio (rounded to even) |
 
 For example, `export.YouTube4K()` on a 1920x1080 timeline produces 3840x2160,
