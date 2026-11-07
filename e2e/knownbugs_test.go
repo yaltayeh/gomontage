@@ -820,3 +820,48 @@ func splitUnescaped(s string, sep byte) []string {
 	}
 	return append(parts, cur.String())
 }
+
+// speed.affect_audio false (SpeedEffect.KeepAudioSpeed): the picture is
+// retimed but the sound plays at normal speed, cut at the clip end (sped up)
+// or followed by silence (slowed down).
+func TestSpeed_KeepAudioSpeed(t *testing.T) {
+	requireFFmpeg(t)
+	// 2 s of picture; a tone during the first 0.5 s only, then silence.
+	src := filepath.Join(t.TempDir(), "blip.mp4")
+	runFFmpeg(t, "-f", "lavfi", "-i", "color=c=red:s=320x180:r=30:d=2",
+		"-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=0.5,apad=whole_dur=2",
+		"-c:v", "mpeg4", "-q:v", "2", "-c:a", "aac", "-ac", "2", "-shortest", src)
+
+	render := func(e *effects.SpeedEffect) string {
+		tl := newTL()
+		tl.AddVideoTrack("v").Add(clip.NewVideo(src).WithEffect(e), 0)
+		return renderMP4(t, tl)
+	}
+	loud := func(out string, at time.Duration) bool {
+		return audioLevel(t, out, at, 100*time.Millisecond).MeanDB > -40
+	}
+
+	// 2x, sound retimed: the 0.5 s tone lasts 0.25 s.
+	retimed := render(effects.SpeedUp(2))
+	if loud(retimed, 350*time.Millisecond) {
+		t.Error("affect_audio true: tone should end at 0.25 s")
+	}
+	// 2x, sound at normal speed: the tone lasts 0.5 s; audio cut at 1 s.
+	kept := render(effects.SpeedUp(2).KeepAudioSpeed())
+	if !loud(kept, 350*time.Millisecond) {
+		t.Error("affect_audio false: tone should still play at 0.35 s")
+	}
+	m := probe(t, kept)
+	assertDuration(t, "video", m.Video().Duration, time.Second, 30)
+	assertDuration(t, "audio", m.Audio().Duration, time.Second, 30)
+
+	// Slowed 2x (4 s of picture), sound at normal speed: 2 s of sound, then
+	// silence up to 4 s.
+	slow := render(effects.SlowDown(2).KeepAudioSpeed())
+	m = probe(t, slow)
+	assertDuration(t, "video", m.Video().Duration, 4*time.Second, 30)
+	assertDuration(t, "audio", m.Audio().Duration, 4*time.Second, 30)
+	if !loud(slow, 300*time.Millisecond) || loud(slow, 700*time.Millisecond) {
+		t.Error("slowed, affect_audio false: tone should play 0-0.5 s only")
+	}
+}

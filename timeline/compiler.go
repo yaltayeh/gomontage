@@ -805,6 +805,10 @@ func (c *Compiler) compileAudioEntry(entry Placement) (string, error) {
 	if f := implicitAudioTempo(cl); f != 1.0 {
 		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, "afxspd")
 		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "afxfit")
+	} else if keepsAudioSpeed(cl) {
+		// Sound at normal speed: cut at the clip's end, or padded with
+		// silence when the picture is slowed down.
+		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "afxfit")
 	}
 
 	// Fades run after effects (AudioSpeed, implicit tempo) so that fade times
@@ -902,6 +906,10 @@ func (c *Compiler) compileAudioFromVideoEntry(entry Placement) (string, error) {
 	if f := implicitAudioTempo(cl); f != 1.0 {
 		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, "vafxspd")
 		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "vafxfit")
+	} else if keepsAudioSpeed(cl) {
+		// Sound at normal speed: cut at the clip's end, or padded with
+		// silence when the picture is slowed down.
+		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "vafxfit")
 	}
 
 	// Apply the clip's fade in/out to its embedded audio, matching the
@@ -961,12 +969,24 @@ func implicitAudioTempo(cl clip.Clip) float64 {
 		case *effects.AudioSpeedEffect:
 			return 1.0
 		case *effects.SpeedEffect:
-			if v.Factor() > 0 {
+			if v.Factor() > 0 && v.AffectsAudio() {
 				factor *= v.Factor()
 			}
 		}
 	}
 	return factor
+}
+
+// keepsAudioSpeed reports whether the clip has a speed effect that leaves
+// its sound at normal speed (SpeedEffect.KeepAudioSpeed); the sound is then
+// cut or padded to the clip's duration.
+func keepsAudioSpeed(cl clip.Clip) bool {
+	for _, e := range cl.Effects() {
+		if s, ok := e.(*effects.SpeedEffect); ok && !s.AffectsAudio() {
+			return true
+		}
+	}
+	return false
 }
 
 // insertVideoGaps walks sorted video labels and inserts black gap clips

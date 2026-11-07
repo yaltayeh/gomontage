@@ -120,9 +120,12 @@ func (e *FadeOutEffect) StartAt() time.Duration { return e.startAt }
 // DurationFactor implements Effect. Fade-out does not change duration.
 func (e *FadeOutEffect) DurationFactor() float64 { return 1.0 }
 
-// SpeedEffect changes the playback speed of video.
+// SpeedEffect changes the playback speed of video. By default the clip's
+// sound is retimed to match (see the timeline compiler); KeepAudioSpeed
+// leaves the sound at normal speed.
 type SpeedEffect struct {
-	factor float64
+	factor    float64
+	keepAudio bool
 }
 
 // SpeedUp creates a speed-up effect. Factor > 1 speeds up, < 1 slows down.
@@ -166,6 +169,17 @@ func (e *SpeedEffect) FilterParams() map[string]string {
 
 // Factor returns the speed multiplier.
 func (e *SpeedEffect) Factor() float64 { return e.factor }
+
+// KeepAudioSpeed returns a copy of the effect that changes only the picture:
+// the clip's sound plays at normal speed and is cut off at the end of the
+// clip (or, when slowed down, ends early and is followed by silence).
+func (e *SpeedEffect) KeepAudioSpeed() *SpeedEffect {
+	return &SpeedEffect{factor: e.factor, keepAudio: true}
+}
+
+// AffectsAudio reports whether the clip's sound is retimed with the picture
+// (true unless KeepAudioSpeed was used).
+func (e *SpeedEffect) AffectsAudio() bool { return !e.keepAudio }
 
 // DurationFactor implements Effect. Speed changes duration inversely:
 // 2x speed halves the duration, 0.5x speed doubles it.
