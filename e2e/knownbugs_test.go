@@ -31,12 +31,12 @@ func redBase(t *testing.T) *timeline.Timeline {
 	return tl
 }
 
-// Bug 1: overlay tracks are opaque black outside their content.
-// Sources: compiler.go compileGapClip (yuv420p black gaps), compileTrack tpad
-// color=black (leading/tail padding), compileGeneratedClip (text drawn on an
-// opaque black color source), compileVideoEntry pad color=black.
+// Bug 1 (fixed in phase 4): overlay tracks used to be opaque black outside
+// their content — gaps, leading/tail padding, letterbox padding and text
+// backgrounds. Upper tracks are now composited clip by clip with alpha
+// (timeline/layout.go compileOverlayClip), so the base shows through.
 func TestKnownBug_1_OverlayTrackOpaque(t *testing.T) {
-	knownBug(t, 1, "overlay tracks are opaque black outside their content")
+	requireFFmpeg(t)
 
 	t.Run("gap_and_tail_show_base", func(t *testing.T) {
 		tl := redBase(t)
@@ -85,12 +85,12 @@ func TestKnownBug_1_OverlayTrackOpaque(t *testing.T) {
 	})
 }
 
-// Bug 2: position and size are ignored. compileVideoEntry always scales file
-// clips to the canvas, and overlayTracks always uses overlay=x=0:y=0.
-// Expected: an overlay with WithPosition is drawn at its native size (or
-// WithSize) with its top-left corner at (X,Y).
+// Bug 2 (fixed in phase 4): position and size used to be ignored. The legacy
+// pixel API now places a clip's top-left corner at (X,Y) at its native size
+// (or WithSize); see clip.ResolvePlacement. The canvas-relative Layout API is
+// tested in layout_test.go.
 func TestKnownBug_2_PositionAndSizeIgnored(t *testing.T) {
-	knownBug(t, 2, "WithPosition/WithSize/TextStyle.Position are ignored")
+	requireFFmpeg(t)
 
 	t.Run("image_with_position", func(t *testing.T) {
 		tl := redBase(t)

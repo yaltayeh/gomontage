@@ -159,45 +159,43 @@ func (c *Compiler) compile(outputPath string, outputParams map[string]string, op
 	cfg := c.timeline.Config()
 	timelineDur := c.timeline.Duration()
 
-	// Phase 1: Compile each video track independently into its own stream.
-	// Each track's clips are sorted, gap-filled, and concatenated in isolation.
-	// This produces one video label (and optionally one audio label) per track.
-	var trackStreams []trackStream
+	// Phase 1: The base layer is the first video track with clips. Its clips
+	// are sorted, gap-filled with black and concatenated into one opaque
+	// stream padded to the timeline duration (one label, plus its audio).
+	//
+	// Phase 2: Every later video track is composited on top clip by clip:
+	// each clip is overlaid at its own time and position (see
+	// compileOverlayClip), so the layers beneath stay visible in gaps, before
+	// and after the clip, and around it. Their sound is mixed in Phase 4.
+	finalVideoLabel := ""
+	var videoAudioLabels []string // audio from video tracks, to be mixed later
 	for _, track := range c.timeline.videoTracks {
 		if len(track.Entries()) == 0 {
 			continue
 		}
-		ts, err := c.compileTrack(track, cfg, timelineDur)
-		if err != nil {
-			return nil, fmt.Errorf("track %q: %w", track.Name(), err)
-		}
-		trackStreams = append(trackStreams, ts)
-	}
-
-	// Phase 2: Composite video tracks together.
-	// Single track → use directly (no overlay needed, keeps old behaviour).
-	// Multiple tracks → chain overlay filters: track[0] is base, each
-	// subsequent track is overlaid on top with format=auto (supports RGBA/alpha).
-	finalVideoLabel := ""
-	var videoAudioLabels []string // audio from video tracks, to be mixed later
-
-	switch len(trackStreams) {
-	case 0:
-		// No video tracks — nothing to composite.
-	case 1:
-		finalVideoLabel = trackStreams[0].video
-		if trackStreams[0].audio != "" {
-			videoAudioLabels = append(videoAudioLabels, trackStreams[0].audio)
-		}
-	default:
-		// Collect audio from all tracks.
-		for _, ts := range trackStreams {
+		if finalVideoLabel == "" {
+			ts, err := c.compileTrack(track, cfg, timelineDur)
+			if err != nil {
+				return nil, fmt.Errorf("track %q: %w", track.Name(), err)
+			}
+			finalVideoLabel = ts.video
 			if ts.audio != "" {
 				videoAudioLabels = append(videoAudioLabels, ts.audio)
 			}
+			continue
 		}
-		// Chain overlay filters bottom-up.
-		finalVideoLabel = c.overlayTracks(trackStreams)
+		entries := append([]Placement(nil), track.Entries()...)
+		sort.SliceStable(entries, func(i, j int) bool { return entries[i].StartAt < entries[j].StartAt })
+		for _, entry := range entries {
+			v, a, err := c.compileOverlayClip(entry, cfg, finalVideoLabel)
+			if err != nil {
+				return nil, fmt.Errorf("track %q: %w", track.Name(), err)
+			}
+			finalVideoLabel = v
+			if a != "" {
+				videoAudioLabels = append(videoAudioLabels, a)
+			}
+		}
 	}
 
 	// Phase 3: Process independent audio tracks (narration, bgm, sfx, etc.).
@@ -291,10 +289,9 @@ func (c *Compiler) compile(outputPath string, outputParams map[string]string, op
 // it is padded with black (and silence) to match, so that overlay compositing
 // works correctly for the full duration.
 func (c *Compiler) compileTrack(track *VideoTrack, cfg Config, timelineDur time.Duration) (trackStream, error) {
-	// isOverlay is true for any track that sits on top of another track.
-	// Overlay tracks must preserve alpha so that transparent regions show
-	// the layers beneath, and fades must affect opacity rather than RGB.
-	isOverlay := track.Index() > 0
+	// compileTrack only compiles the base layer (upper tracks are composited
+	// clip by clip), so its clips are opaque and fade to/from black.
+	isOverlay := false
 
 	// Step 1: compile every clip entry on this track.
 	var labels []clipLabel
@@ -449,34 +446,6 @@ func (c *Compiler) scaleToOutput(label string, w, h int) string {
 	return sarLabel
 }
 
-// overlayTracks chains overlay filters across all track streams.
-// trackStreams[0] is the bottom (background) layer; each subsequent stream is
-// composited on top. overlay=format=auto is used so that RGBA sources (e.g.
-// transparent PNGs) are handled correctly — the alpha channel is respected.
-func (c *Compiler) overlayTracks(trackStreams []trackStream) string {
-	// Start with the bottom track as the base.
-	baseLabel := trackStreams[0].video
-
-	for i := 1; i < len(trackStreams); i++ {
-		topLabel := trackStreams[i].video
-
-		overlayNode := c.graph.AddFilter("overlay", map[string]string{
-			"x":      "0",
-			"y":      "0",
-			"format": "auto",
-		})
-		overlayLabel := c.nextLabelFor("voverlay", overlayNode)
-
-		// overlay expects [base][top] as its two inputs.
-		c.graph.Connect(c.findFilterByLabel(baseLabel), overlayNode, baseLabel, engine.StreamVideo)
-		c.graph.Connect(c.findFilterByLabel(topLabel), overlayNode, topLabel, engine.StreamVideo)
-
-		baseLabel = overlayLabel
-	}
-
-	return baseLabel
-}
-
 // clipLabel holds the output labels for a processed clip.
 type clipLabel struct {
 	video string
@@ -496,13 +465,18 @@ type clipLabel struct {
 func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool) ([]clipLabel, error) {
 	cl := entry.Clip
 	path := cl.SourcePath()
+	pl := clip.ResolvePlacement(cl, cfg.Width, cfg.Height)
+	// A base-layer clip that isn't full-frame (custom layout, or a
+	// translucent color) is composited onto a black canvas after its effects.
+	needsCanvas := false
 
 	var currentLabel string
 	var lastNode *engine.Node
 
 	if path == "" {
 		// Generated clips (color, text) — use source filters.
-		genLabel, genNode, err := c.compileGeneratedClip(entry, cfg)
+		genLabel, genNode, canvas, err := c.compileGeneratedClip(entry, cfg, pl, isOverlay)
+		needsCanvas = canvas
 		if err != nil {
 			return nil, err
 		}
@@ -556,7 +530,14 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		// dimensions. Finally normalise SAR to 1:1 so that clips from different
 		// source files (which may carry different Sample Aspect Ratios, e.g.
 		// 45:34 vs 27:20) all present square pixels to the concat filter.
-		if cfg.Width > 0 && cfg.Height > 0 {
+		if isOverlay || !pl.Default {
+			// Keep (or add) an alpha channel and scale to the layout box,
+			// without padding: the space around the picture stays empty.
+			s := c.then(vstream{currentLabel, lastNode}, "format", "lfmt", map[string]string{"pix_fmts": "yuva420p"}, engine.StreamVideo)
+			s = c.scaleToBox(s, pl, cfg)
+			currentLabel, lastNode = s.label, s.node
+			needsCanvas = !isOverlay
+		} else if cfg.Width > 0 && cfg.Height > 0 {
 			scaleNode := c.graph.AddFilter("scale", map[string]string{
 				"w":                           fmt.Sprintf("%d", cfg.Width),
 				"h":                           fmt.Sprintf("%d", cfg.Height),
@@ -596,11 +577,8 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		// channel (yuva420p) so transparent regions are visible through the
 		// overlay. On the base track we convert to yuv420p (no alpha needed).
 		// Generated clips (color, text) already get this in compileGeneratedClip.
-		if cl.ClipType() == clip.TypeImage {
+		if cl.ClipType() == clip.TypeImage && !isOverlay && pl.Default {
 			pixFmt := "yuv420p"
-			if isOverlay {
-				pixFmt = "yuva420p"
-			}
 			fmtNode := c.graph.AddFilter("format", map[string]string{
 				"pix_fmts": pixFmt,
 			})
@@ -621,6 +599,13 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		c.graph.Connect(lastNode, filterNode, currentLabel, engine.StreamVideo)
 		currentLabel = filterLabel
 		lastNode = filterNode
+	}
+
+	// Composite a non-full-frame base clip onto a black canvas (after speed
+	// effects, so the canvas has the clip's output duration).
+	if needsCanvas {
+		s := c.placeOnCanvas(vstream{currentLabel, lastNode}, pl, cl.Duration(), cfg)
+		currentLabel, lastNode = s.label, s.node
 	}
 
 	// Fades run after effects so that fade times (computed from the clip's
@@ -686,21 +671,18 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 
 // compileGeneratedClip handles color and text clips that don't come from files.
 // It returns the output label and the last node in the filter chain, so that
-// the caller can continue applying effects (fades, etc.) to the generated clip.
-func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config) (string, *engine.Node, error) {
+// the caller can continue applying effects (fades, etc.) to the generated clip,
+// and whether the result still has to be composited onto a canvas (a base-layer
+// color that is translucent or smaller than the canvas). Text on upper tracks
+// is drawn by compileOverlayClip instead.
+func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config, pl clip.Placement, isOverlay bool) (string, *engine.Node, bool, error) {
 	cl := entry.Clip
 
 	switch v := cl.(type) {
 	case *clip.ColorClip:
 		colorHex := strings.TrimPrefix(v.Color, "#")
-		w := v.Width()
-		h := v.Height()
-		if w == 0 {
-			w = cfg.Width
-		}
-		if h == 0 {
-			h = cfg.Height
-		}
+		w, h := colorBox(pl, cfg)
+		translucent := colorHasAlpha(v.Color)
 		node := c.graph.AddFilter("color", map[string]string{
 			"c": colorHex,
 			"s": fmt.Sprintf("%dx%d", w, h),
@@ -709,18 +691,23 @@ func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config) (string, *e
 		})
 		label := c.nextLabelFor("gen", node)
 
-		// Normalize pixel format to yuv420p so generated clips can be
-		// concatenated with real video (which is typically yuv420p).
+		// Full-frame opaque colors on the base layer are normalized to
+		// yuv420p for concat; anything else keeps its alpha.
+		canvas := !isOverlay && (!pl.Default || translucent)
+		pixFmt := "yuv420p"
+		if isOverlay || canvas {
+			pixFmt = "yuva420p"
+		}
 		fmtNode := c.graph.AddFilter("format", map[string]string{
-			"pix_fmts": "yuv420p",
+			"pix_fmts": pixFmt,
 		})
 		fmtLabel := c.nextLabelFor("genfmt", fmtNode)
 		c.graph.Connect(node, fmtNode, label, engine.StreamVideo)
 
-		return fmtLabel, fmtNode, nil
+		return fmtLabel, fmtNode, canvas, nil
 
 	case *clip.TextClip:
-		// Text clips use the drawtext filter on a solid color background.
+		// Base-layer text is drawn on a black canvas of the timeline size.
 		bgNode := c.graph.AddFilter("color", map[string]string{
 			"c": "black",
 			"s": fmt.Sprintf("%dx%d", cfg.Width, cfg.Height),
@@ -731,15 +718,7 @@ func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config) (string, *e
 
 		// User-supplied strings are escaped for the filtergraph, and
 		// expansion=none makes '%' literal, so any text renders verbatim.
-		textNode := c.graph.AddFilter("drawtext", map[string]string{
-			"text":      engine.EscapeFilterValue(v.Text),
-			"expansion": "none",
-			"fontsize":  fmt.Sprintf("%d", v.Style.Size),
-			"fontcolor": engine.EscapeFilterValue(v.Style.Color),
-		})
-		if v.Style.Font != "" {
-			textNode.Params["fontfile"] = engine.EscapeFilterValue(v.Style.Font)
-		}
+		textNode := c.graph.AddFilter("drawtext", drawtextParams(v, pl))
 		textLabel := c.nextLabelFor("gen", textNode)
 		c.graph.Connect(bgNode, textNode, bgLabel, engine.StreamVideo)
 
@@ -750,10 +729,10 @@ func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config) (string, *e
 		fmtLabel := c.nextLabelFor("genfmt", fmtNode)
 		c.graph.Connect(textNode, fmtNode, textLabel, engine.StreamVideo)
 
-		return fmtLabel, fmtNode, nil
+		return fmtLabel, fmtNode, false, nil
 
 	default:
-		return "", nil, fmt.Errorf("unsupported generated clip type: %T", cl)
+		return "", nil, false, fmt.Errorf("unsupported generated clip type: %T", cl)
 	}
 }
 
