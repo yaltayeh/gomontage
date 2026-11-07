@@ -68,7 +68,9 @@ effects.SlowDown(2.0)  // Same as SpeedUp(0.5)
 ```
 
 Speed effects retime the clip's audio too (pitch-preserving `atempo`), so
-picture and sound stay in sync, including inside sequences. If you add an
+picture and sound stay in sync, including inside sequences. To change only the
+picture, use `effects.SpeedUp(2).KeepAudioSpeed()`: the sound plays at normal
+speed and is cut at the end of the clip (or followed by silence when slowed). If you add an
 explicit `effects.AudioSpeed(...)` to the same clip, it takes over and the
 audio is retimed only by that factor.
 

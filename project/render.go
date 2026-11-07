@@ -47,15 +47,12 @@ func PresetProfile(preset string) (*export.Profile, error) {
 // preset and path override p.Output when non-empty; path is used as given
 // (relative to the working directory), while p.Output.Path is resolved
 // against p.Dir(). It returns an error if no preset or path is known, the
-// extension doesn't suit the preset (L7), or the project asks for an output
-// fit the library can't do yet (output.fit "cover", L13).
+// extension doesn't suit the preset (L7). The project's output.fit (contain
+// or cover) is applied to the profile.
 func RenderTarget(p *Project, preset, path string) (*export.Profile, string, error) {
 	var out Output
 	if p.Output != nil {
 		out = *p.Output
-	}
-	if out.FitValue() == FitCover {
-		return nil, "", &ValidationError{Problems: []Problem{{Path: "/output/fit", Message: `output: fit "cover" is not supported yet`}}}
 	}
 	if preset == "" {
 		preset = out.Preset
@@ -73,6 +70,7 @@ func RenderTarget(p *Project, preset, path string) (*export.Profile, string, err
 	if err != nil {
 		return nil, "", err
 	}
+	profile.Fit = out.FitValue()
 	if ok, exts := extensionAllowed(preset, path); !ok {
 		return nil, "", fmt.Errorf("output file %q: extension %q doesn't suit preset %q (use %s)",
 			path, strings.ToLower(filepath.Ext(path)), preset, strings.Join(exts, " or "))

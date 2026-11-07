@@ -57,14 +57,13 @@ func TestCheckFile_RenderBlockersAndNoDuplicateWarnings(t *testing.T) {
 func TestCheck_KnownGapsAreRenderBlockers(t *testing.T) {
 	p := loadExampleWithFiles(t, "effects-transitions.json")
 	r := Check(p)
-	if len(r.ProjectErrors) != 0 || len(r.RenderBlockers) != 4 || r.OK() {
+	if len(r.ProjectErrors) != 0 || len(r.RenderBlockers) != 3 || r.OK() {
 		t.Errorf("result: errors %v blockers %v", r.ProjectErrors, lines(r.RenderBlockers))
 	}
-	// output.fit "cover" is a render blocker too.
+	// output.fit "cover" is supported (phase 4): not a blocker.
 	p.Output.Fit = FitCover
-	r = Check(p)
-	if got := lines(r.RenderBlockers); got[len(got)-1] != `/output/fit: output: fit "cover" is not supported yet` {
-		t.Errorf("render blockers %v", got)
+	if r = Check(p); len(r.RenderBlockers) != 3 {
+		t.Errorf("render blockers %v", lines(r.RenderBlockers))
 	}
 }
 

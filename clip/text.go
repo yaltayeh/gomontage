@@ -8,31 +8,50 @@ import (
 
 // TextStyle configures the visual appearance of a TextClip.
 type TextStyle struct {
-	// Font is the path to a .ttf or .otf font file.
-	// If empty, FFmpeg's default font is used.
+	// Font is the path to a .ttf or .otf font file. Takes precedence over
+	// FontFamily. If both are empty, the system's default sans-serif font is
+	// used.
 	Font string
+
+	// FontFamily is an installed font family name (e.g. "Noto Sans Arabic"),
+	// looked up with fontconfig. Used when Font is empty.
+	FontFamily string
 
 	// Size is the font size in points. Default is 48.
 	Size int
 
-	// Color is the text color as a hex string (e.g. "#FFFFFF") or named color.
-	// Default is white.
+	// Color is the text color as a hex string ("#RRGGBB", or "#RRGGBBAA"
+	// with alpha) or a named color. Default is white.
 	Color string
 
-	// Background is the background color behind the text. Empty means transparent.
+	// Background is the color of a box drawn behind the text ("#RRGGBBAA"
+	// allowed). Empty means no box.
 	Background string
 
-	// BorderWidth is the width of the text border/outline in pixels. 0 = no border.
+	// BorderWidth is the width of the outline drawn around each letter, in
+	// pixels. 0 = no outline.
 	BorderWidth int
 
-	// BorderColor is the border color. Default is black.
+	// BorderColor is the outline color. Default is black.
 	BorderColor string
 
-	// Position is where the text is placed on the canvas.
+	// Position is the legacy pixel position of the text box's top-left
+	// corner (see clip.Position). The zero value means "not set": the text is
+	// centred on the canvas. Prefer TextClip.WithLayout.
 	Position Position
 
-	// BoxPadding is the padding around the text when Background is set.
+	// BoxPadding is the space between the text and the edge of the
+	// Background box, in pixels.
 	BoxPadding int
+
+	// Align aligns the lines of multi-line text: "left", "center" or
+	// "right". Empty uses FFmpeg's default (left).
+	Align string
+
+	// Direction is the text direction: "" or "auto" (detected from the
+	// text by FriBidi), "ltr" or "rtl" (forces the paragraph direction, e.g.
+	// so a mixed Arabic/English line reads right to left).
+	Direction string
 }
 
 // DefaultTextStyle returns a TextStyle with sensible defaults.
@@ -81,6 +100,8 @@ func NewText(text string, style TextStyle) *TextClip {
 			hasVideo: true,
 			volume:   1.0,
 			position: style.Position,
+			// A non-zero TextStyle.Position counts as WithPosition.
+			positionSet: style.Position != (Position{}),
 		},
 		Text:  text,
 		Style: style,
@@ -99,6 +120,7 @@ func (c *TextClip) WithDuration(d time.Duration) *TextClip {
 func (c *TextClip) WithPosition(pos Position) *TextClip {
 	n := &TextClip{Base: *c.base(), Text: c.Text, Style: c.Style}
 	n.position = pos
+	n.positionSet = true
 	return n
 }
 
@@ -127,5 +149,14 @@ func (c *TextClip) WithFadeOut(d time.Duration) *TextClip {
 func (c *TextClip) WithEffect(e effects.Effect) *TextClip {
 	n := &TextClip{Base: *c.base(), Text: c.Text, Style: c.Style}
 	n.applyEffect(e)
+	return n
+}
+
+// WithLayout returns a new TextClip placed on the canvas with l (fractions of
+// the canvas, an anchor and an optional size; see Layout). It takes
+// precedence over WithPosition/WithSize.
+func (c *TextClip) WithLayout(l Layout) *TextClip {
+	n := &TextClip{Base: *c.base(), Text: c.Text, Style: c.Style}
+	n.layout = &l
 	return n
 }

@@ -134,9 +134,9 @@ tl, err := project.Build(p)                              // -> *timeline.Timelin
 err = project.Save("my-edit.gomontage.json", p)          // canonical, byte-stable
 ```
 
-Features the library can't render yet (transitions, overlay tracks, text
-clips, custom position/size) are reported as errors by `render`/`Build`
-instead of being rendered differently; see the spec's "Known gaps".
+Transitions are the one feature the library can't render yet; projects that
+use them are reported by `render`/`validate` as "render blockers" instead of
+being rendered differently (see the spec's "Known gaps").
 
 ---
 

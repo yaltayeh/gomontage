@@ -7,7 +7,6 @@ import (
 	"math"
 	"os"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/ahmedhodiani/gomontage/clip"
@@ -153,32 +152,96 @@ func buildClip(p *Project, c *Clip) (clip.Clip, error) {
 				v = v.WithEffect(videoEffect(e))
 			}
 		}
+		if l, ok := clipLayout(c); ok {
+			v = v.WithLayout(l)
+		}
 		return withFades(v, c), nil
 
 	case ClipImage:
 		m := p.MediaByID(c.Media)
-		return withFades(clip.NewImage(p.Resolve(m.Path)).WithDuration(ms(c.DurationMS)), c), nil
+		img := clip.NewImage(p.Resolve(m.Path)).WithDuration(ms(c.DurationMS))
+		if l, ok := clipLayout(c); ok {
+			img = img.WithLayout(l)
+		}
+		return withFades(img, c), nil
 
 	case ClipColor:
-		return withFades(clip.NewColor(c.Color, 0, 0).WithDuration(ms(c.DurationMS)), c), nil
+		col := clip.NewColor(c.Color, 0, 0).WithDuration(ms(c.DurationMS))
+		if l, ok := clipLayout(c); ok {
+			col = col.WithLayout(l)
+		}
+		return withFades(col, c), nil
 
 	case ClipText:
-		style := clip.TextStyle{
-			Size:  int(math.Round(c.Style.SizeValue() * float64(p.Format.Height))),
-			Color: c.Style.ColorValue(),
+		t := clip.NewText(c.Text, textStyle(p, c)).WithDuration(ms(c.DurationMS))
+		if l, ok := clipLayout(c); ok {
+			t = t.WithLayout(l)
 		}
-		if c.Style != nil && c.Style.Font != nil && c.Style.Font.File != "" {
-			style.Font = p.Resolve(c.Style.Font.File)
-		}
-		return withFades(clip.NewText(c.Text, style).WithDuration(ms(c.DurationMS)), c), nil
+		return withFades(t, c), nil
 	}
 	return nil, fmt.Errorf("project: clip %q: unknown type %q", c.ID, c.Type)
 }
 
+// clipLayout maps a clip's position/anchor/size to a clip.Layout; ok is
+// false when all three are at their defaults.
+func clipLayout(c *Clip) (clip.Layout, bool) {
+	if c.Position == nil && c.Anchor == "" && c.Size == nil {
+		return clip.Layout{}, false
+	}
+	pos := c.PositionValue()
+	l := clip.Layout{X: pos.X, Y: pos.Y, Anchor: clip.Anchor(c.AnchorValue())}
+	if c.Size != nil {
+		l.Width, l.Height, l.Fit = c.Size.Width, c.Size.Height, clip.Fit(c.Size.FitValue())
+	}
+	return l, true
+}
+
+// textStyle maps a text clip's style: sizes given as fractions (of the
+// canvas height for the font, of the font size for padding and outline)
+// become pixels; alignment defaults to centre as the format specifies.
+func textStyle(p *Project, c *Clip) clip.TextStyle {
+	st := c.Style
+	px := int(math.Round(st.SizeValue() * float64(p.Format.Height)))
+	ts := clip.TextStyle{Size: px, Color: st.ColorValue(), Align: DefaultAlign}
+	if st == nil {
+		return ts
+	}
+	if st.Font != nil {
+		if st.Font.File != "" {
+			ts.Font = p.Resolve(st.Font.File)
+		}
+		ts.FontFamily = st.Font.Family
+	}
+	if st.Box != nil {
+		pad := DefaultBoxPadding
+		if st.Box.Padding != nil {
+			pad = *st.Box.Padding
+		}
+		ts.Background = st.Box.Color
+		ts.BoxPadding = int(math.Round(pad * float64(px)))
+	}
+	if st.Outline != nil {
+		w := DefaultOutlineW
+		if st.Outline.Width != nil {
+			w = *st.Outline.Width
+		}
+		ts.BorderWidth = max(1, int(math.Round(w*float64(px))))
+		ts.BorderColor = st.Outline.Color
+	}
+	if st.Align != "" {
+		ts.Align = st.Align
+	}
+	ts.Direction = st.Direction
+	return ts
+}
+
 // videoEffect maps an effect on a video clip. speed uses SpeedUp, whose
-// sound follows automatically (affect_audio false is rejected by L13).
+// sound follows automatically unless affect_audio is false.
 func videoEffect(e Effect) effects.Effect {
 	if e.Type == EffectSpeed {
+		if !e.AffectsAudio() {
+			return effects.SpeedUp(e.Factor).KeepAudioSpeed()
+		}
 		return effects.SpeedUp(e.Factor)
 	}
 	return effects.NormalizeTo(e.TargetLUFSValue())
@@ -215,18 +278,10 @@ func renderProblems(p *Project) []Problem {
 	r := &ruleRun{p: p}
 	usedMedia := map[string]bool{}
 	enabledClips := 0
-	videoTracks := 0
 	for ti := range p.Tracks {
 		t := &p.Tracks[ti]
 		if !t.IsEnabled() {
 			continue
-		}
-		if t.Kind == KindVideo {
-			videoTracks++
-			// L13: overlay tracks (known bug #1).
-			if videoTracks > 1 && len(t.Clips) > 0 {
-				r.fail(trackPath(ti), "track %q: overlay tracks are not supported yet (known bug #1)", t.ID)
-			}
 		}
 		for ci := range t.Clips {
 			c := &t.Clips[ci]
@@ -259,68 +314,27 @@ func renderProblems(p *Project) []Problem {
 	return append(missing, r.problems...)
 }
 
-// checkRenderableClip runs L9 and the clip-level L13 checks.
+// checkRenderableClip runs L9 (fonts) and the clip-level L13 check (the only
+// known gap left: transitions).
 func (r *ruleRun) checkRenderableClip(ti, ci int, c *Clip) {
 	path := clipPath(ti, ci)
 	if c.TransitionIn != nil {
 		r.fail(path+"/transition_in", "clip %q: transition_in is not supported yet", c.ID)
 	}
-	for ei := range c.Effects {
-		if e := &c.Effects[ei]; e.Type == EffectSpeed && !e.AffectsAudio() {
-			r.fail(effectPath(ti, ci, ei)+"/affect_audio", "clip %q: speed.affect_audio false is not supported yet", c.ID)
-		}
-	}
-	if c.Type == ClipColor && len(c.Color) == 9 && !strings.EqualFold(c.Color[7:], "FF") {
-		r.fail(path+"/color", "clip %q: color %q has transparency, which is not supported yet", c.ID, c.Color)
-	}
-	if c.Type == ClipText {
-		// drawtext is given no x/y, so text always lands in the top-left
-		// corner, while the format's default is the centre (known bug #2).
-		r.fail(path, "clip %q: text clips are not supported yet: text is always drawn at the top-left corner (known bug #2)", c.ID)
-		if st := c.Style; st != nil {
-			if st.Font != nil && st.Font.Family != "" {
-				r.fail(path+"/style/font/family", "clip %q: style.font.family is not supported yet (use style.font.file)", c.ID)
-			}
-			if st.Font != nil && st.Font.File != "" {
-				if _, err := os.Stat(r.p.Resolve(st.Font.File)); err != nil {
-					r.fail(path+"/style/font/file", "clip %q: font file not found: %s", c.ID, st.Font.File) // L9
-				}
-			}
-			if st.Box != nil {
-				r.fail(path+"/style/box", "clip %q: style.box is not supported yet", c.ID)
-			}
-			if st.Outline != nil {
-				r.fail(path+"/style/outline", "clip %q: style.outline is not supported yet", c.ID)
-			}
-			if st.Align != "" {
-				r.fail(path+"/style/align", "clip %q: style.align %q is not supported yet", c.ID, st.Align)
-			}
-			if st.Direction != "" {
-				r.fail(path+"/style/direction", "clip %q: style.direction %q is not supported yet", c.ID, st.Direction)
-			}
-		}
+	if c.Type != ClipText || c.Style == nil || c.Style.Font == nil {
 		return
 	}
-	// Layout with non-default values (known bug #2). Canonicalization has
-	// already cleared default values.
-	var fields []string
-	if c.Position != nil {
-		fields = append(fields, "position")
+	if f := c.Style.Font.File; f != "" {
+		if _, err := os.Stat(r.p.Resolve(f)); err != nil {
+			r.fail(path+"/style/font/file", "clip %q: font file not found: %s", c.ID, f)
+		}
 	}
-	if c.Anchor != "" {
-		fields = append(fields, "anchor")
+	if fam := c.Style.Font.Family; fam != "" {
+		switch ok, err := fontFamilyInstalled(fam); {
+		case err != nil:
+			r.fail(path+"/style/font/family", "clip %q: cannot check font family %q: %v (use style.font.file instead)", c.ID, fam, err)
+		case !ok:
+			r.fail(path+"/style/font/family", "clip %q: font family %q is not installed (fontconfig can't find it)", c.ID, fam)
+		}
 	}
-	if c.Size != nil {
-		fields = append(fields, "size")
-	}
-	if len(fields) > 0 {
-		r.fail(path, "clip %q: %s not supported yet (known bug #2)", c.ID, joinFields(fields))
-	}
-}
-
-func joinFields(f []string) string {
-	if len(f) == 1 {
-		return f[0] + " is"
-	}
-	return strings.Join(f[:len(f)-1], ", ") + " and " + f[len(f)-1] + " are"
 }

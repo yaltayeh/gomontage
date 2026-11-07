@@ -40,20 +40,26 @@ func (t Type) String() string {
 	}
 }
 
-// Position specifies where a clip is placed spatially (for overlays).
+// Position is the legacy pixel position of a clip (see WithPosition): the
+// clip's top-left corner is placed at X, Y pixels. -1 means the right/bottom
+// edge (the clip is right/bottom-aligned there), -2 the centre (the clip is
+// centred there). Prefer Layout (WithLayout), which uses fractions of the
+// canvas and survives format changes.
 type Position struct {
-	// X is the horizontal position in pixels from the left.
+	// X is the horizontal position in pixels from the left (-1 right edge,
+	// -2 centre).
 	X int
-	// Y is the vertical position in pixels from the top.
+	// Y is the vertical position in pixels from the top (-1 bottom edge,
+	// -2 centre).
 	Y int
-	// Relative indicates if X and Y are relative to the canvas (0.0-1.0).
+	// Relative is not used. Use Layout for positions relative to the canvas.
 	Relative bool
 }
 
 // Predefined positions for common placements.
 var (
 	// Center places the clip at the center of the canvas.
-	Center = Position{X: 0, Y: 0, Relative: false} // Resolved by the compiler.
+	Center = Position{X: -2, Y: -2}
 	// TopLeft places the clip at the top-left corner.
 	TopLeft = Position{X: 0, Y: 0}
 	// TopRight places the clip at the top-right corner (resolved by compiler).
@@ -136,6 +142,13 @@ type Base struct {
 	width      int
 	height     int
 	effects    []effects.Effect
+
+	// layout is set by WithLayout (nil = none). positionSet/sizeSet record
+	// that the legacy WithPosition/WithSize were called; see
+	// ResolvePlacement.
+	layout      *Layout
+	positionSet bool
+	sizeSet     bool
 
 	// sourceDuration is the probed length of the source file (0 = unknown,
 	// e.g. images or clips built with New*WithDuration).

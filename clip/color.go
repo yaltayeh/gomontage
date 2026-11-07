@@ -72,3 +72,12 @@ func (c *ColorClip) WithEffect(e effects.Effect) *ColorClip {
 	n.applyEffect(e)
 	return n
 }
+
+// WithLayout returns a new ColorClip placed on the canvas with l (fractions of
+// the canvas, an anchor and an optional size; see Layout). It takes
+// precedence over WithPosition/WithSize.
+func (c *ColorClip) WithLayout(l Layout) *ColorClip {
+	n := &ColorClip{Base: *c.base(), Color: c.Color}
+	n.layout = &l
+	return n
+}

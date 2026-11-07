@@ -4,6 +4,7 @@ package e2e
 
 import (
 	"bytes"
+	"image"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -211,9 +212,10 @@ func TestProject_CLIRender(t *testing.T) {
 		t.Errorf("wav override: %+v", m.Streams)
 	}
 
-	// A project that can't be rendered: nothing on stdout, problems on stderr.
-	p.Tracks[0].Clips[0].TransitionIn = nil
-	p.Tracks[0].Clips = append(p.Tracks[0].Clips, project.Clip{ID: "c2", Type: project.ClipText, Text: "hi", AtMS: 1000, DurationMS: 500})
+	// A project that can't be rendered (transitions are still a known gap):
+	// nothing on stdout, problems on stderr.
+	p.Tracks[0].Clips = append(p.Tracks[0].Clips, project.Clip{ID: "c2", Type: project.ClipVideo, Media: id,
+		AtMS: 1000, InMS: 1000, OutMS: 1500, TransitionIn: &project.Transition{Type: project.TransitionCrossfade, DurationMS: 200}})
 	project.Save(file, p)
 	cmd = exec.Command(bin, "render", file)
 	stdout.Reset()
@@ -222,7 +224,92 @@ func TestProject_CLIRender(t *testing.T) {
 	if err := cmd.Run(); err == nil {
 		t.Fatal("expected render to fail")
 	}
-	if stdout.Len() != 0 || !strings.Contains(stderr.String(), `/tracks/0/clips/1: clip "c2": text clips are not supported yet`) {
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), `/tracks/0/clips/1/transition_in: clip "c2": transition_in is not supported yet`) {
 		t.Errorf("stdout %q\nstderr %s", stdout.String(), stderr.String())
+	}
+}
+
+// examples/reel-arabic-overlay.json — overlays, layout, Arabic text with a
+// box and an outline, cover, music — has no render blockers and renders as
+// the file describes (generated media at the example's paths).
+func TestProject_RenderReelExample(t *testing.T) {
+	font := testFont(t) // also makes the family "El Messiri" resolvable
+	requireEncoder(t, "libmp3lame")
+	path := copyExample(t, "reel-arabic-overlay.json")
+	dir := filepath.Dir(path)
+	// 9:16 street footage (green) with sound, a logo (opaque blue left half,
+	// transparent right half), music, and the font file.
+	moveInto(t, genVideo(t, VideoSpec{W: 216, H: 384, FPS: 30, Color: "0x00C000", ToneHz: 330, Dur: 17 * time.Second, FileName: "street.mov"}), dir, "media/street.mov")
+	moveInto(t, genAlphaPNG(t, 80, 80, 0, 0, 255), dir, "brand/logo.png")
+	music := filepath.Join(dir, "media", "music.mp3")
+	runFFmpeg(t, "-f", "lavfi", "-i", "sine=f=550:sample_rate=44100:d=20", "-c:a", "libmp3lame", music)
+	data, _ := os.ReadFile(font)
+	os.MkdirAll(filepath.Join(dir, "fonts"), 0o755)
+	if err := os.WriteFile(filepath.Join(dir, "fonts", "ElMessiri.ttf"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	r, p, err := project.CheckFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.OK() {
+		t.Fatalf("project errors %v, render blockers %v", r.ProjectErrors, r.RenderBlockers)
+	}
+	tl, err := project.Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reel, out, err := project.RenderTarget(p, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Fast encoder at the reel preset's size and fit.
+	prof := testProfile()
+	prof.Width, prof.Height, prof.Fit = reel.Width, reel.Height, reel.Fit
+	os.MkdirAll(filepath.Dir(out), 0o755)
+	if err := tl.ExportSilent(prof, out); err != nil {
+		t.Fatal(err)
+	}
+
+	m := probe(t, out)
+	v, a := m.Video(), m.Audio()
+	if v == nil || a == nil || v.Width != 1080 || v.Height != 1920 {
+		t.Fatalf("streams %+v", m.Streams)
+	}
+	assertDuration(t, "video", v.Duration, 12*time.Second, 30)
+
+	// The footage fills the frame (size 1x1 cover on a 9:16 canvas).
+	assertPixel(t, out, 5*time.Second, 540, 900, RGB{0, 192, 0}, colorTol)
+	// Logo: 0.18 of the width (194 px), top-right anchor at (0.95, 0.04):
+	// x 832-1026, y 77-271. Opaque left half blue; transparent right half
+	// shows the footage.
+	assertPixel(t, out, 5*time.Second, 870, 170, Blue, colorTol)
+	assertPixel(t, out, 5*time.Second, 1000, 170, RGB{0, 192, 0}, colorTol)
+	assertPixel(t, out, 5*time.Second, 790, 170, RGB{0, 192, 0}, colorTol) // left of the logo
+	// Title "قريباً" 1.5-7.5 s: a translucent dark box whose bottom edge sits
+	// at 0.85 of the height (1632 px), with white glyphs in it.
+	frame := frameAt(t, out, 4*time.Second)
+	boxColor := RGB{0, 64, 0} // #000000AA over green
+	box := bbox(frame, boxColor, 30)
+	if box.Empty() || abs(box.Max.Y-1632) > 3 || abs((box.Min.X+box.Max.X)/2-540) > 3 {
+		t.Errorf("title box at %v, want bottom edge at y=1632, centred on x=540", box)
+	}
+	if n := countNear(frame, box, RGB{255, 255, 255}, 40); n < 500 {
+		t.Errorf("title box contains only %d white glyph pixels", n)
+	}
+	// Outside the title's time the box is gone.
+	if b := bbox(frameAt(t, out, 7900*time.Millisecond), boxColor, 30); !b.Empty() {
+		t.Errorf("title box still visible at 7.9 s: %v", b)
+	}
+	// Date text 8-12 s: white glyphs with a black outline around the centre.
+	frame = frameAt(t, out, 10*time.Second)
+	centre := image.Rect(240, 840, 840, 1080)
+	if countNear(frame, centre, RGB{255, 255, 255}, 40) < 300 || countNear(frame, centre, Black, 40) < 300 {
+		t.Error("date text (white with black outline) not found at the centre")
+	}
+	// Music (0.6 volume, faded) is audible; the footage's own sound is off.
+	if l := audioLevel(t, out, 5*time.Second, time.Second); l.MeanDB < -40 {
+		t.Errorf("music not audible: %.1f dB", l.MeanDB)
 	}
 }

@@ -455,7 +455,7 @@
       "additionalProperties": false,
       "properties": {
         "font": {
-          "description": "The font: either {\"family\": \"Noto Sans Arabic\"} (an installed font, looked up by name) or {\"file\": \"fonts/MyFont.ttf\"} (a font file, path relative to the project). Default: the system's default sans-serif font. For Arabic and other non-Latin scripts, choose a font that contains those letters.",
+          "description": "The font: either {\"family\": \"Noto Sans Arabic\"} (an installed font, looked up by name) or {\"file\": \"fonts/MyFont.ttf\"} (a font file, path relative to the project). Default: the system's default sans-serif font. Every character must exist in the chosen font (there is no fallback): for Arabic, or mixed Arabic and English, choose a font that contains all those letters.",
           "type": "object",
           "additionalProperties": false,
           "minProperties": 1,
@@ -536,7 +536,7 @@
           "default": "center"
         },
         "direction": {
-          "description": "Text direction. \"auto\" detects it from the text (Arabic and Hebrew become right-to-left). Default \"auto\".",
+          "description": "Paragraph direction. \"auto\" (default): taken from the first strong letter, so Arabic text is right-to-left but a line that starts with a Latin word (\"Hello مرحبا\") is left-to-right. \"rtl\" or \"ltr\" force the direction, e.g. \"rtl\" displays \"Hello مرحبا\" as \"مرحبا Hello\".",
           "enum": [
             "auto",
             "ltr",

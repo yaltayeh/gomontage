@@ -27,9 +27,11 @@ func TestRenderTarget(t *testing.T) {
 	if _, _, err := RenderTarget(p, "tiktok", "x.mp4"); err == nil || !strings.Contains(err.Error(), "unknown output preset") {
 		t.Errorf("unknown preset: %v", err)
 	}
+	if prof.Fit != FitContain {
+		t.Errorf("default fit %q", prof.Fit)
+	}
 	p.Output.Fit = FitCover
-	_, _, err = RenderTarget(p, "", "")
-	if got := problemLines(t, err); len(got) != 1 || got[0] != `/output/fit: output: fit "cover" is not supported yet` {
-		t.Errorf("cover: %v", got)
+	if prof, _, err = RenderTarget(p, "", ""); err != nil || prof.Fit != FitCover {
+		t.Errorf("cover: %v %v", prof, err)
 	}
 }

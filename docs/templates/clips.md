@@ -117,3 +117,47 @@ result := clip.NewVideo("raw.mp4").
     WithFadeIn(1*time.Second).
     WithFadeOut(2*time.Second)
 ```
+
+## Layout (position and size)
+
+Place any visual clip — video, image, color or text — with fractions of the
+canvas, so the layout survives a change of format (16:9 → 9:16):
+
+```go
+logo := clip.NewImage("logo.png").WithDuration(5 * time.Second).
+    WithLayout(clip.Layout{
+        X: 0.96, Y: 0.04,             // a point on the canvas (0..1)
+        Anchor: clip.AnchorTopRight,  // which point of the clip sits there
+        Width: 0.18,                  // 18% of the canvas width; height keeps the aspect
+    })
+```
+
+`Width`/`Height` are fractions of the canvas; give one (the other keeps the
+aspect ratio), both (filled according to `Fit`: `clip.FitContain`,
+`clip.FitCover` or `clip.FitStretch`), or neither (as large as possible inside
+the canvas). Clips on upper video tracks are composited with transparency: the
+tracks beneath show through around them and in gaps.
+
+The older pixel API still works: `WithPosition(clip.Position{X: 200, Y: 100})`
+places the clip's top-left corner at that pixel (at its source size, or the
+`WithSize` you give); `-1` means the right/bottom edge and `clip.Center` the
+centre.
+
+## Text styling
+
+```go
+title := clip.NewText("قريباً", clip.TextStyle{
+    Font:        "fonts/ElMessiri.ttf", // or FontFamily: "El Messiri" (fontconfig)
+    Size:        96,                    // px
+    Color:       "#FFFFFF",             // "#RRGGBBAA" for translucent text
+    Background:  "#000000AA",           // box behind the text
+    BoxPadding:  24,                    // px
+    BorderWidth: 3, BorderColor: "#000000", // outline
+    Align:       "center",              // multi-line alignment
+    Direction:   "rtl",                 // "auto" (default), "ltr" or "rtl"
+}).WithDuration(4 * time.Second).WithLayout(clip.Layout{X: 0.5, Y: 0.85, Anchor: clip.AnchorBottom})
+```
+
+The font must contain every character (there is no fallback font). Arabic is
+shaped and laid out right to left by HarfBuzz/FriBidi; `Direction: "rtl"` makes
+a line that starts with a Latin word read right to left too.

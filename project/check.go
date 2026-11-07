@@ -15,8 +15,8 @@ import (
 //   - RenderBlockers: the project is valid but can't be rendered right now —
 //     missing media used by enabled clips (L8), missing font files (L9), no
 //     enabled clips (L12), features the library can't render yet (L13,
-//     section 14, including output.fit "cover"). The project can still be
-//     loaded, edited and saved.
+//     section 14: transitions). The project can still be loaded, edited
+//     and saved.
 //
 // Render blockers are only checked when there are no project errors
 // (RenderChecked reports whether they were). Warnings never block anything;
@@ -96,9 +96,6 @@ func finishCheck(q *Project, warnings []Warning, loadErr error) (*CheckResult, *
 	}
 	r.RenderChecked = true
 	r.RenderBlockers = renderProblems(q)
-	if q.Output != nil && q.Output.FitValue() == FitCover {
-		r.RenderBlockers = append(r.RenderBlockers, Problem{Path: "/output/fit", Message: `output: fit "cover" is not supported yet`})
-	}
 	// A missing media file is a load warning and a render blocker: keep it
 	// once, as the blocker.
 	blocker := map[string]bool{}
