@@ -118,6 +118,7 @@ func (c *VideoClip) WithFadeOut(d time.Duration) *VideoClip {
 func (c *VideoClip) WithPosition(pos Position) *VideoClip {
 	n := &VideoClip{Base: *c.base()}
 	n.position = pos
+	n.positionSet = true
 	return n
 }
 
@@ -126,6 +127,7 @@ func (c *VideoClip) WithSize(width, height int) *VideoClip {
 	n := &VideoClip{Base: *c.base()}
 	n.width = width
 	n.height = height
+	n.sizeSet = true
 	return n
 }
 
@@ -156,5 +158,14 @@ func (c *VideoClip) VideoOnly() *VideoClip {
 func (c *VideoClip) WithEffect(e effects.Effect) *VideoClip {
 	n := &VideoClip{Base: *c.base()}
 	n.applyEffect(e)
+	return n
+}
+
+// WithLayout returns a new VideoClip placed on the canvas with l (fractions of
+// the canvas, an anchor and an optional size; see Layout). It takes
+// precedence over WithPosition/WithSize.
+func (c *VideoClip) WithLayout(l Layout) *VideoClip {
+	n := &VideoClip{Base: *c.base()}
+	n.layout = &l
 	return n
 }

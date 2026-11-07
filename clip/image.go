@@ -45,6 +45,7 @@ func (c *ImageClip) WithDuration(d time.Duration) *ImageClip {
 func (c *ImageClip) WithPosition(pos Position) *ImageClip {
 	n := &ImageClip{Base: *c.base()}
 	n.position = pos
+	n.positionSet = true
 	return n
 }
 
@@ -53,6 +54,7 @@ func (c *ImageClip) WithSize(width, height int) *ImageClip {
 	n := &ImageClip{Base: *c.base()}
 	n.width = width
 	n.height = height
+	n.sizeSet = true
 	return n
 }
 
@@ -81,5 +83,14 @@ func (c *ImageClip) WithFadeOut(d time.Duration) *ImageClip {
 func (c *ImageClip) WithEffect(e effects.Effect) *ImageClip {
 	n := &ImageClip{Base: *c.base()}
 	n.applyEffect(e)
+	return n
+}
+
+// WithLayout returns a new ImageClip placed on the canvas with l (fractions of
+// the canvas, an anchor and an optional size; see Layout). It takes
+// precedence over WithPosition/WithSize.
+func (c *ImageClip) WithLayout(l Layout) *ImageClip {
+	n := &ImageClip{Base: *c.base()}
+	n.layout = &l
 	return n
 }
