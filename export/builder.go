@@ -67,6 +67,14 @@ func (b *ProfileBuilder) WithResolution(width, height int) *ProfileBuilder {
 	return b
 }
 
+// WithFit sets how the canvas is fitted into the profile's resolution when
+// the aspect ratios differ: "contain" (black bars, the default) or "cover"
+// (fill and crop).
+func (b *ProfileBuilder) WithFit(fit string) *ProfileBuilder {
+	b.profile.Fit = fit
+	return b
+}
+
 // WithMaxRate sets the maximum bitrate for VBV buffering.
 func (b *ProfileBuilder) WithMaxRate(rate string) *ProfileBuilder {
 	b.profile.MaxRate = rate

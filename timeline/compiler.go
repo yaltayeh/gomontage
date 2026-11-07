@@ -105,6 +105,7 @@ func (c *Compiler) Compile(outputPath string, outputParams map[string]string) (*
 func (c *Compiler) CompileProfile(outputPath string, profile *export.Profile) (*engine.Graph, error) {
 	opts := compileOptions{profileName: profile.Name}
 	opts.outWidth, opts.outHeight = resolveOutputSize(c.timeline.Config(), profile)
+	opts.outFit = profile.Fit
 	video, audio := profile.OutputStreams(outputPath)
 	opts.dropVideo, opts.dropAudio = !video, !audio
 	return c.compile(outputPath, profile.Params(), opts)
@@ -114,6 +115,9 @@ func (c *Compiler) CompileProfile(outputPath string, profile *export.Profile) (*
 type compileOptions struct {
 	// outWidth/outHeight is the final output size; 0 means the timeline size.
 	outWidth, outHeight int
+	// outFit is how the canvas fits the output size: "" / "contain" or
+	// "cover".
+	outFit string
 
 	// dropVideo/dropAudio leave that stream type out of the output, for
 	// profiles whose container can't carry it (see Profile.OutputStreams).
@@ -251,7 +255,7 @@ func (c *Compiler) compile(outputPath string, outputParams map[string]string, op
 
 	// Phase 4b: Scale the composite to the profile's output size, if any.
 	if finalVideoLabel != "" && opts.outWidth > 0 && opts.outHeight > 0 {
-		finalVideoLabel = c.scaleToOutput(finalVideoLabel, opts.outWidth, opts.outHeight)
+		finalVideoLabel = c.scaleToOutput(finalVideoLabel, opts.outWidth, opts.outHeight, opts.outFit)
 	}
 
 	// Phase 5: Create output node and wire up final streams.
@@ -419,9 +423,17 @@ func (c *Compiler) ensureFilterOutput(label, passthrough string, stream engine.S
 	return out
 }
 
-// scaleToOutput fits the composite into w×h (aspect preserved), pads the rest
-// with black and normalizes SAR, returning the new video label.
-func (c *Compiler) scaleToOutput(label string, w, h int) string {
+// scaleToOutput fits the composite into w×h: contain (aspect preserved, pads the rest
+// with black) or cover (fills and crops), normalizes SAR, returns the new label.
+func (c *Compiler) scaleToOutput(label string, w, h int, fit string) string {
+	if fit == "cover" {
+		// Scale to fill the frame, then crop the overflow (centred).
+		s := c.then(c.streamOf(label), "scale", "oscale", map[string]string{
+			"w": fmt.Sprintf("%d", w), "h": fmt.Sprintf("%d", h), "force_original_aspect_ratio": "increase",
+		}, engine.StreamVideo)
+		s = c.then(s, "crop", "ocrop", map[string]string{"w": fmt.Sprintf("%d", w), "h": fmt.Sprintf("%d", h)}, engine.StreamVideo)
+		return c.then(s, "setsar", "osar", map[string]string{"ratio": "1/1"}, engine.StreamVideo).label
+	}
 	scaleNode := c.graph.AddFilter("scale", map[string]string{
 		"w":                           fmt.Sprintf("%d", w),
 		"h":                           fmt.Sprintf("%d", h),

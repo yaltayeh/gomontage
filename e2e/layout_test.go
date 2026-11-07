@@ -330,3 +330,40 @@ func TestText_Align(t *testing.T) {
 		t.Errorf("left: lines %v / %v", top, bottom)
 	}
 }
+
+// A 16:9 canvas into a 9:16 output: contain letterboxes (both edges of the
+// picture visible, black bars above and below), cover fills the frame and
+// crops the sides (no bars, edges cut off).
+func TestOutputFit_CoverVsContain(t *testing.T) {
+	requireFFmpeg(t)
+	src := filepath.Join(t.TempDir(), "edges.mp4")
+	// Green left quarter, red middle, blue right quarter.
+	runFFmpeg(t, "-f", "lavfi", "-i",
+		"color=c=black:s=320x180:r=30:d=1,format=rgb24,geq=r='if(between(X,80,239),255,0)':g='if(lt(X,80),255,0)':b='if(gt(X,239),255,0)'",
+		"-c:v", "mpeg4", "-q:v", "2", "-pix_fmt", "yuv420p", src)
+	tl := timeline.New(timeline.Config{Width: 320, Height: 180, FPS: 30})
+	tl.AddVideoTrack("v").Add(clip.NewVideo(src), 0)
+
+	render := func(fit string) string {
+		p := testProfile()
+		p.Width, p.Height, p.Fit = 180, 320, fit
+		return render(t, tl, p, ".mp4")
+	}
+	contain := render("contain")
+	if v := probe(t, contain).Video(); v.Width != 180 || v.Height != 320 {
+		t.Fatalf("contain size %dx%d", v.Width, v.Height)
+	}
+	at := 500 * time.Millisecond
+	assertPixel(t, contain, at, 90, 20, Black, colorTol)  // bar above
+	assertPixel(t, contain, at, 90, 300, Black, colorTol) // bar below
+	assertPixel(t, contain, at, 10, 160, Green, colorTol) // left edge visible
+	assertPixel(t, contain, at, 170, 160, Blue, colorTol) // right edge visible
+
+	cover := render("cover")
+	if v := probe(t, cover).Video(); v.Width != 180 || v.Height != 320 {
+		t.Fatalf("cover size %dx%d", v.Width, v.Height)
+	}
+	for _, pt := range [][2]int{{90, 5}, {90, 315}, {5, 160}, {175, 160}} {
+		assertPixel(t, cover, at, pt[0], pt[1], Red, colorTol) // red middle fills the frame
+	}
+}

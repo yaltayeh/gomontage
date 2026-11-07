@@ -32,6 +32,12 @@ type Profile struct {
 	// Height is the output height. 0 means use timeline height.
 	Height int
 
+	// Fit says how the timeline canvas is fitted into Width×Height when the
+	// aspect ratios differ: "" or "contain" scales it to fit and adds black
+	// bars; "cover" scales it to fill the frame and crops the overflow
+	// (centred). Ignored when the profile has no size.
+	Fit string
+
 	// MaxRate limits the maximum bitrate for VBV buffering.
 	MaxRate string
 
