@@ -50,6 +50,29 @@ track.AddSequence(intro, mainContent, outro)
 // intro starts at 0, mainContent starts when intro ends, etc.
 ```
 
+### With a Transition
+
+A transition joins a clip to the clip that ends exactly where it starts. It is
+centred on the cut and made from extra source footage ("handles") beyond the
+two clips' trim points, so clip positions and the timeline duration never
+change:
+
+```go
+a := interview.Trim(10*time.Second, 20*time.Second)
+b := broll.Trim(5*time.Second, 15*time.Second)
+track.Add(a, 0)
+track.AddWithTransition(b, a.Duration(), timeline.Crossfade(time.Second))
+// The crossfade runs 9.5s-10.5s: a shows source 20s-20.5s after its end,
+// b shows source 4.5s-5s before its start.
+```
+
+Handles scale with speed effects (a 2x clip needs twice as much source). Images,
+text and colors have unlimited handles. On the bottom video track the pictures
+dissolve (`xfade`); on upper tracks the two clips' opacity cross-fades; sound
+cross-fades with `acrossfade` (audio tracks and the sound of video clips).
+`Validate` reports a transition without an adjacent previous clip, without
+enough source for its handles, or overlapping the clip's other transition.
+
 ## Timeline Duration
 
 Duration is automatically calculated from the latest-ending clip:
