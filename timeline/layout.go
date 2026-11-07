@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/text/unicode/bidi"
+
 	"github.com/ahmedhodiani/gomontage/clip"
 	"github.com/ahmedhodiani/gomontage/engine"
 )
@@ -127,23 +129,36 @@ func textMargin(st clip.TextStyle) int {
 	return st.BorderWidth
 }
 
-// applyDirection forces a paragraph direction with Unicode embedding marks
-// (handled by FriBidi in drawtext): RLE/LRE ... PDF around each line.
+// applyDirection sets each line's paragraph direction with Unicode embedding
+// marks (RLE/LRE ... PDF), which FriBidi in drawtext honors. drawtext itself
+// always lays out paragraphs left to right, so "auto" (or "") is resolved
+// here: a line whose first strong letter is right-to-left (Arabic, Hebrew)
+// is made RTL, any other line is left as is. "rtl"/"ltr" force a direction.
 func applyDirection(text, dir string) string {
-	var open string
-	switch dir {
-	case "rtl":
-		open = "‫"
-	case "ltr":
-		open = "‪"
-	default:
-		return text
-	}
 	lines := strings.Split(text, "\n")
 	for i, l := range lines {
-		lines[i] = open + l + "‬"
+		switch {
+		case dir == "rtl" || (dir != "ltr" && firstStrongRTL(l)):
+			lines[i] = "\u202B" + l + "\u202C"
+		case dir == "ltr":
+			lines[i] = "\u202A" + l + "\u202C"
+		}
 	}
 	return strings.Join(lines, "\n")
+}
+
+// firstStrongRTL reports whether the first strongly directional character of
+// s is right-to-left (Unicode bidi class R or AL).
+func firstStrongRTL(s string) bool {
+	for _, r := range s {
+		switch p, _ := bidi.LookupRune(r); p.Class() {
+		case bidi.R, bidi.AL:
+			return true
+		case bidi.L:
+			return false
+		}
+	}
+	return false
 }
 
 // drawtextParams returns the drawtext options for a text clip: escaped text

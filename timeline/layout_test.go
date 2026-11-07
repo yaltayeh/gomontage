@@ -52,3 +52,19 @@ func TestColorHasAlpha(t *testing.T) {
 		}
 	}
 }
+
+func TestApplyDirection(t *testing.T) {
+	const rle, lre, pdf = "\u202B", "\u202A", "\u202C"
+	for _, tc := range []struct{ text, dir, want string }{
+		{"قريباً", "", rle + "قريباً" + pdf},
+		{"١٥ نوفمبر\nNovember 15", "auto", rle + "١٥ نوفمبر" + pdf + "\nNovember 15"}, // digits are weak; first strong is Arabic
+		{"Hello مرحبا", "auto", "Hello مرحبا"},                                        // first strong is Latin
+		{"Hello مرحبا", "rtl", rle + "Hello مرحبا" + pdf},
+		{"مرحبا Hello", "ltr", lre + "مرحبا Hello" + pdf},
+		{"123", "", "123"},
+	} {
+		if got := applyDirection(tc.text, tc.dir); got != tc.want {
+			t.Errorf("applyDirection(%q, %q) = %q, want %q", tc.text, tc.dir, got, tc.want)
+		}
+	}
+}

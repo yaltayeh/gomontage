@@ -301,6 +301,19 @@ func TestText_ArabicShapingAndRTL(t *testing.T) {
 	if same(rtl, frame("Hello مرحبا", "auto", "")) {
 		t.Error("direction rtl had no effect on a mixed line")
 	}
+
+	// auto takes the paragraph direction from the first strong letter
+	// (drawtext alone always lays out left to right): lines that start with
+	// Arabic but contain Western digits or Latin words read right to left.
+	for _, text := range []string{"15 نوفمبر", "مرحبا Hello"} {
+		auto := frame(text, "auto", "")
+		if !same(auto, frame(text, "rtl", "")) {
+			t.Errorf("auto %q should render right to left", text)
+		}
+		if same(auto, frame(text, "ltr", "")) {
+			t.Errorf("auto %q renders like ltr", text)
+		}
+	}
 }
 
 // Text alignment of multi-line text: right-aligned lines share their right

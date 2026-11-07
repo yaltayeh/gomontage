@@ -309,7 +309,7 @@ All fields optional.
 | `box` | `{color, padding?}` | none | Background box. `padding` = fraction of font size (default 0.25). |
 | `outline` | `{color, width?}` | none | Letter outline. `width` = fraction of font size (default 0.05). |
 | `align` | `left`\|`center`\|`right` | `center` | Alignment of lines in multi-line text. |
-| `direction` | `auto`\|`ltr`\|`rtl` | `auto` | Paragraph direction. `auto`: FriBidi takes it from the first strong letter, so "قريباً" is RTL but a line starting with a Latin word ("Hello مرحبا") is LTR. `rtl`/`ltr` force it (applied per line with Unicode embedding marks), e.g. `rtl` displays "Hello مرحبا" as "مرحبا Hello". |
+| `direction` | `auto`\|`ltr`\|`rtl` | `auto` | Paragraph direction, per line. `auto`: taken from the line's first strong letter, so "قريباً", "15 نوفمبر" and "مرحبا Hello" are RTL while "Hello مرحبا" is LTR. (FFmpeg's drawtext always lays paragraphs out left to right; GoMontage resolves `auto` itself and applies the direction with Unicode embedding marks.) `rtl`/`ltr` force it, e.g. `rtl` displays "Hello مرحبا" as "مرحبا Hello". |
 
 RTL: text is shaped with HarfBuzz and reordered with FriBidi, which requires an
 FFmpeg built with `libharfbuzz` and `libfribidi` (`drawtext`). drawtext has no
