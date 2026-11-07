@@ -1,8 +1,10 @@
-// Package schema holds the JSON Schema for GoMontage project files
-// (project.v1.schema.json). This test keeps the schema and the examples in
-// examples/ in sync: every example must validate, and a set of invalid
-// projects must be rejected with a useful message.
 package schema
+
+// These tests keep the schema (project.v1.schema.json) and the files in
+// examples/ in sync: every example must validate, a set of invalid projects
+// must be rejected with a useful message, and the loader-level fixtures in
+// testdata/loader must be schema-valid. TestEmbeddedSchemaMatchesFile checks
+// that ProjectV1 is the file on disk.
 
 import (
 	"encoding/json"
@@ -256,5 +258,24 @@ func TestLoaderFixtures(t *testing.T) {
 				t.Error("loader fixture needs meta.description and meta.expect_error")
 			}
 		})
+	}
+}
+
+func TestEmbeddedSchemaMatchesFile(t *testing.T) {
+	data, err := os.ReadFile(schemaFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != string(ProjectV1) {
+		t.Error("ProjectV1 differs from project.v1.schema.json")
+	}
+	var doc struct {
+		ID string `json:"$id"`
+	}
+	if err := json.Unmarshal(ProjectV1, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.ID != ProjectV1URL {
+		t.Errorf("schema $id = %q, ProjectV1URL = %q", doc.ID, ProjectV1URL)
 	}
 }

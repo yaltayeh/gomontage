@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -74,6 +77,7 @@ func TestCommandsRegistered(t *testing.T) {
 		{"run", runCmd},
 		{"probe", probeCmd},
 		{"validate", validateCmd},
+		{"render", renderCmd},
 		{"docs", docsCmd},
 	}
 
@@ -120,5 +124,86 @@ func TestProbeCommandRequiresArg(t *testing.T) {
 	err := cmd.Args(cmd, []string{})
 	if err == nil {
 		t.Error("expected probe command to reject zero arguments")
+	}
+}
+
+func runValidate(t *testing.T, args ...string) (string, error) {
+	t.Helper()
+	cmd := validateCmd()
+	var out, stderr strings.Builder
+	cmd.SetOut(&out)
+	cmd.SetErr(&stderr) // cobra's own "Error:" line; the real binary silences it
+	cmd.SetArgs(args)
+	err := cmd.Execute()
+	return out.String(), err
+}
+
+func TestValidateProjectFile_ProjectErrors(t *testing.T) {
+	path := "../../schema/testdata/loader/transition-first-clip.json"
+	out, err := runValidate(t, path)
+	if err == nil {
+		t.Fatal("expected an error exit")
+	}
+	want := `Project errors (1):
+  /tracks/0/clips/0: clip "c1": transition_in on the first clip of track "t_main" (there is no previous clip)
+Render blockers: not checked (fix the project errors first)
+Warnings: none
+` + path + `: invalid (1 project error, 0 render blockers, 0 warnings)
+`
+	if out != want {
+		t.Errorf("output:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+func TestValidateProjectFile_RenderBlockers(t *testing.T) {
+	path := "../../examples/simple-trim-concat.json"
+	out, err := runValidate(t, path)
+	if err == nil {
+		t.Fatal("expected an error exit (media files are missing)")
+	}
+	want := `Project errors: none
+Render blockers (3):
+  /media/0: media "m_intro": file not found: media/intro.mp4
+  /media/1: media "m_interview": file not found: media/interview.mov
+  /media/2: media "m_outro": file not found: media/outro.mp4
+Warnings: none
+` + path + `: valid but cannot be rendered yet (0 project errors, 3 render blockers, 0 warnings)
+`
+	if out != want {
+		t.Errorf("output:\n%s\nwant:\n%s", out, want)
+	}
+}
+
+func TestValidateProjectFile_OK(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "p.gomontage.json")
+	data := `{"version": 1, "format": {"width": 320, "height": 180, "fps": 30},
+	  "media": [{"id": "m1", "kind": "image", "path": "unused.png", "probe": {"width": 8, "height": 8}}],
+	  "tracks": [{"id": "t1", "kind": "video", "clips": [{"id": "c1", "type": "color", "color": "#FF0000", "at_ms": 0, "duration_ms": 1000}]}],
+	  "output": {"preset": "gif", "path": "out.gif"}}`
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runValidate(t, path)
+	want := `Project errors: none
+Render blockers: none
+Warnings (1):
+  /media/0: media "m1": file not found: unused.png
+` + path + `: OK (0 project errors, 0 render blockers, 1 warning)
+`
+	if err != nil || out != want {
+		t.Errorf("err %v, output:\n%s\nwant:\n%s", err, out, want)
+	}
+}
+
+func TestValidate_NoArgsKeepsYAMLBehavior(t *testing.T) {
+	dir := t.TempDir()
+	wd, _ := os.Getwd()
+	defer os.Chdir(wd)
+	if err := os.Chdir(dir); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runValidate(t); err == nil || !strings.Contains(err.Error(), "gomontage.yaml") {
+		t.Errorf("no-arg validate without gomontage.yaml: err = %v", err)
 	}
 }

@@ -111,13 +111,32 @@ Writes a full markdown API reference and guides into the `docs/` directory.
 
 ---
 
-## Project files (design)
+## Project files
 
-A JSON project format that describes a whole edit (media bin, tracks, clips,
-effects, output) is specified in [docs/project-format.md](docs/project-format.md),
-with a JSON Schema in [`schema/`](schema/project.v1.schema.json) and examples in
-[`examples/`](examples/). The loader that turns a project file into a
-`timeline.Timeline` is not implemented yet.
+Instead of writing Go code, an edit can be described in a JSON project file
+(`*.gomontage.json`): media bin, tracks, clips, effects and output settings.
+The format is specified in [docs/project-format.md](docs/project-format.md),
+with a JSON Schema in [`schema/`](schema/project.v1.schema.json) and examples
+in [`examples/`](examples/).
+
+```bash
+gomontage validate examples/simple-trim-concat.json   # project errors, render blockers, warnings
+gomontage render my-edit.gomontage.json               # render with the project's output preset
+gomontage render my-edit.gomontage.json -o out.wav --preset wav
+```
+
+From Go, the `project` package loads, validates, edits, saves and builds them:
+
+```go
+p, warnings, err := project.Load("my-edit.gomontage.json")
+id, err := project.ImportMedia(p, "media/interview.mov") // probe once, add to the media bin
+tl, err := project.Build(p)                              // -> *timeline.Timeline
+err = project.Save("my-edit.gomontage.json", p)          // canonical, byte-stable
+```
+
+Features the library can't render yet (transitions, overlay tracks, text
+clips, custom position/size) are reported as errors by `render`/`Build`
+instead of being rendered differently; see the spec's "Known gaps".
 
 ---
 
@@ -136,6 +155,7 @@ the timeline size. See `docs/templates/export.md`.
 ```bash
 make test            # fast unit tests (no FFmpeg)
 make test-e2e        # end-to-end renders with real FFmpeg (known bugs skipped)
+make test-e2e-long   # also the slow ones (full 20-minute podcast render)
 make test-e2e-bugs   # also run known-bug tests (GOMONTAGE_KNOWN_BUGS=1; expected to fail)
 ```
 
