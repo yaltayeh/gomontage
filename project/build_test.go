@@ -2,6 +2,7 @@ package project
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -112,36 +113,79 @@ func TestBuild_PodcastExample(t *testing.T) {
 	}
 }
 
-func TestBuild_KnownGapErrors(t *testing.T) {
-	cases := map[string][]string{
-		"reel-arabic-overlay.json": {
-			`/tracks/0/clips/0: clip "c_broll": size is not supported yet (known bug #2)`,
-			`/tracks/1: track "t_logo": overlay tracks are not supported yet (known bug #1)`,
-			`/tracks/1/clips/0: clip "c_logo": position, anchor and size are not supported yet (known bug #2)`,
-			`/tracks/2: track "t_titles": overlay tracks are not supported yet (known bug #1)`,
-			`/tracks/2/clips/0: clip "c_title": text clips are not supported yet: text is always drawn at the top-left corner (known bug #2)`,
-			`/tracks/2/clips/0/style/font/family: clip "c_title": style.font.family is not supported yet (use style.font.file)`,
-			`/tracks/2/clips/0/style/box: clip "c_title": style.box is not supported yet`,
-			`/tracks/2/clips/1: clip "c_date": text clips are not supported yet: text is always drawn at the top-left corner (known bug #2)`,
-			`/tracks/2/clips/1/style/outline: clip "c_date": style.outline is not supported yet`,
-		},
-		"effects-transitions.json": {
-			`/tracks/0/clips/2/transition_in: clip "c_beach": transition_in is not supported yet`,
-			`/tracks/0/clips/2/effects/0/affect_audio: clip "c_beach": speed.affect_audio false is not supported yet`,
-			`/tracks/0/clips/3/transition_in: clip "c_sunset": transition_in is not supported yet`,
-			`/tracks/1/clips/1/transition_in: clip "c_song_b": transition_in is not supported yet`,
-		},
+// useTestFonts points fontconfig (FONTCONFIG_FILE) at testdata/fonts, so the
+// font family "El Messiri" resolves on any machine.
+func useTestFonts(t *testing.T) {
+	t.Helper()
+	if _, err := exec.LookPath("fc-list"); err != nil {
+		t.Skip("fc-list not found (fontconfig): can't check font families")
 	}
-	for name, want := range cases {
-		t.Run(name, func(t *testing.T) {
-			_, err := Build(loadExampleWithFiles(t, name))
-			if err == nil {
-				t.Fatal("expected Build to fail")
-			}
-			if got := problemLines(t, err); !reflect.DeepEqual(got, want) {
-				t.Errorf("problems:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
-			}
-		})
+	dir, _ := filepath.Abs(filepath.Join("..", "testdata", "fonts"))
+	conf := filepath.Join(t.TempDir(), "fonts.conf")
+	xml := `<?xml version="1.0"?><fontconfig><dir>` + dir + `</dir><cachedir>` + t.TempDir() + `</cachedir></fontconfig>`
+	if err := os.WriteFile(conf, []byte(xml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("FONTCONFIG_FILE", conf)
+}
+
+// The reel example (overlays, layout, Arabic text with box/outline, cover)
+// builds with no render blockers.
+func TestBuild_ReelExample(t *testing.T) {
+	useTestFonts(t)
+	p := loadExampleWithFiles(t, "reel-arabic-overlay.json")
+	if r := Check(p); !r.OK() {
+		t.Fatalf("render blockers: %v", r.RenderBlockers)
+	}
+	tl, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tl.VideoTracks()) != 3 || len(tl.AudioTracks()) != 1 {
+		t.Fatalf("tracks: %d video, %d audio", len(tl.VideoTracks()), len(tl.AudioTracks()))
+	}
+	// Layout and text style are mapped.
+	logo := tl.VideoTracks()[1].Entries()[0].Clip
+	if l, ok := logo.(*clip.ImageClip).Layout(); !ok || l.X != 0.95 || l.Anchor != clip.AnchorTopRight || l.Width != 0.18 {
+		t.Errorf("logo layout %+v", l)
+	}
+	title := tl.VideoTracks()[2].Entries()[0].Clip.(*clip.TextClip)
+	st := title.Style
+	if st.Size != 134 || st.FontFamily != "El Messiri" || st.Background != "#000000AA" || st.BoxPadding != 40 || st.Align != "center" {
+		t.Errorf("title style %+v (size 0.07*1920=134, padding 0.3*134=40)", st)
+	}
+	date := tl.VideoTracks()[2].Entries()[1].Clip.(*clip.TextClip)
+	if date.Style.BorderWidth != 7 || date.Style.Font != p.Resolve("fonts/ElMessiri.ttf") {
+		t.Errorf("date style %+v (outline 0.08*86=7)", date.Style)
+	}
+	if _, err := tl.DryRun(export.Reel(), filepath.Join(p.Dir(), "out.mp4")); err != nil {
+		t.Errorf("DryRun: %v", err)
+	}
+}
+
+// Transitions are the only known gap left.
+func TestBuild_TransitionsAreTheOnlyKnownGap(t *testing.T) {
+	_, err := Build(loadExampleWithFiles(t, "effects-transitions.json"))
+	want := []string{
+		`/tracks/0/clips/2/transition_in: clip "c_beach": transition_in is not supported yet`,
+		`/tracks/0/clips/3/transition_in: clip "c_sunset": transition_in is not supported yet`,
+		`/tracks/1/clips/1/transition_in: clip "c_song_b": transition_in is not supported yet`,
+	}
+	if got := problemLines(t, err); !reflect.DeepEqual(got, want) {
+		t.Errorf("problems:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+}
+
+func TestBuild_FontFamilyMustBeInstalled(t *testing.T) {
+	useTestFonts(t)
+	p := New(t.TempDir(), Format{Width: 320, Height: 180, FPS: 30})
+	p.Tracks = []Track{{ID: "t1", Kind: KindVideo, Clips: []Clip{
+		{ID: "c1", Type: ClipText, Text: "hi", DurationMS: 1000, Style: &TextStyle{Font: &Font{Family: "No Such Font"}}},
+		{ID: "c2", Type: ClipText, Text: "hi", AtMS: 1000, DurationMS: 1000, Style: &TextStyle{Font: &Font{Family: "el messiri"}}},
+	}}}
+	_, err := Build(p)
+	if got := problemLines(t, err); len(got) != 1 || got[0] != `/tracks/0/clips/0/style/font/family: clip "c1": font family "No Such Font" is not installed (fontconfig can't find it)` {
+		t.Errorf("problems: %v", got)
 	}
 }
 
@@ -183,15 +227,13 @@ func TestBuild_RenderChecks(t *testing.T) {
 		}
 	})
 
-	t.Run("color with transparency", func(t *testing.T) {
+	t.Run("color with transparency builds", func(t *testing.T) {
 		p := newP()
 		p.Tracks = []Track{{ID: "t1", Kind: KindVideo, Clips: []Clip{
 			{ID: "c1", Type: ClipColor, Color: "#00000080", DurationMS: 1000},
-			{ID: "c2", Type: ClipColor, Color: "#000000ff", AtMS: 1000, DurationMS: 1000},
 		}}}
-		_, err := Build(p)
-		if got := problemLines(t, err); len(got) != 1 || got[0] != `/tracks/0/clips/0/color: clip "c1": color "#00000080" has transparency, which is not supported yet` {
-			t.Errorf("problems: %v", got)
+		if _, err := Build(p); err != nil {
+			t.Error(err)
 		}
 	})
 
@@ -201,14 +243,8 @@ func TestBuild_RenderChecks(t *testing.T) {
 			{ID: "c1", Type: ClipText, Text: "hi", DurationMS: 1000, Style: &TextStyle{Font: &Font{File: "fonts/x.ttf"}, Align: "left"}},
 		}}}
 		_, err := Build(p)
-		got := strings.Join(problemLines(t, err), "\n")
-		for _, w := range []string{
-			`/tracks/0/clips/0/style/font/file: clip "c1": font file not found: fonts/x.ttf`,
-			`/tracks/0/clips/0/style/align: clip "c1": style.align "left" is not supported yet`,
-		} {
-			if !strings.Contains(got, w) {
-				t.Errorf("missing %s in:\n%s", w, got)
-			}
+		if got := problemLines(t, err); len(got) != 1 || got[0] != `/tracks/0/clips/0/style/font/file: clip "c1": font file not found: fonts/x.ttf` {
+			t.Errorf("problems: %v", got)
 		}
 	})
 

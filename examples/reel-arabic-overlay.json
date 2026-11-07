@@ -105,7 +105,7 @@
           "fade_out_ms": 400,
           "style": {
             "font": {
-              "family": "Noto Sans Arabic"
+              "family": "El Messiri"
             },
             "size": 0.07,
             "box": {
@@ -128,7 +128,7 @@
           "fade_in_ms": 300,
           "style": {
             "font": {
-              "file": "fonts/NotoSansArabic-Bold.ttf"
+              "file": "fonts/ElMessiri.ttf"
             },
             "size": 0.045,
             "outline": {

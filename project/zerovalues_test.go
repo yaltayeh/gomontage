@@ -2,6 +2,9 @@ package project
 
 import (
 	"encoding/json"
+
+	"github.com/ahmedhodiani/gomontage/clip"
+	"github.com/ahmedhodiani/gomontage/effects"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -184,23 +187,24 @@ func TestZeroValues_Build(t *testing.T) {
 		t.Error("include_audio false: built clip still has audio")
 	}
 
-	// Explicit zeros of not-yet-renderable fields are kept and reported,
-	// not silently treated as defaults.
+	// position {0,0} and affect_audio false reach the timeline (phase 4: no
+	// longer known gaps) instead of being treated as defaults.
 	p = parseZero(t, dir, func(d map[string]any) {
 		d["tracks"].([]any)[2].(map[string]any)["enabled"] = false
 		c := d["tracks"].([]any)[0].(map[string]any)["clips"].([]any)[0].(map[string]any)
 		c["position"] = map[string]any{"x": 0, "y": 0}
 		c["effects"] = []any{map[string]any{"type": "speed", "factor": 2, "affect_audio": false}}
 	})
-	_, err = Build(p)
-	got := strings.Join(problemLines(t, err), "\n")
-	for _, want := range []string{
-		`clip "c_v": position is not supported yet (known bug #2)`,
-		`clip "c_v": speed.affect_audio false is not supported yet`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("missing %q in:\n%s", want, got)
-		}
+	tl, err = Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vc := tl.VideoTracks()[0].Entries()[0].Clip.(*clip.VideoClip)
+	if l, ok := vc.Layout(); !ok || l.X != 0 || l.Y != 0 || l.Anchor != clip.AnchorCenter {
+		t.Errorf("position {0,0}: layout %+v %v", l, ok)
+	}
+	if sp, ok := vc.Effects()[0].(*effects.SpeedEffect); !ok || sp.AffectsAudio() {
+		t.Errorf("affect_audio false: effect %+v", vc.Effects()[0])
 	}
 }
 
