@@ -3,9 +3,12 @@ package timeline
 import (
 	"fmt"
 	"math"
+	"sort"
 	"time"
 
 	"github.com/ahmedhodiani/gomontage/clip"
+	"github.com/ahmedhodiani/gomontage/effects"
+	"github.com/ahmedhodiani/gomontage/engine"
 )
 
 // TransitionType names how a transition blends two clips.
@@ -213,4 +216,236 @@ func validateTransitions(trackName string, entries []Placement) error {
 		}
 	}
 	return nil
+}
+
+// pictureWindow is the source window [start, end) a file clip's picture
+// reads with its handles: the handles are scaled by the clip's speed.
+func pictureWindow(c clip.Clip, e clipEdge) (time.Duration, time.Duration) {
+	rate := sourceRate(c)
+	start := c.TrimStart() - time.Duration(float64(e.head())*rate)
+	end := c.TrimEnd() + time.Duration(float64(e.tail())*rate)
+	return max(start, 0), end
+}
+
+// soundRate is how fast a clip's sound consumes its source per second of
+// timeline time: 1 for SpeedEffect.KeepAudioSpeed, the speed factor when the
+// sound follows the picture's speed, and the AudioSpeed factor otherwise.
+func soundRate(c clip.Clip) float64 {
+	if !c.HasVideo() {
+		return sourceRate(c) // the sound is the clip: AudioSpeed sets its length
+	}
+	if keepsAudioSpeed(c) {
+		return 1
+	}
+	if f := implicitAudioTempo(c); f != 1 {
+		return f
+	}
+	rate := 1.0
+	for _, e := range c.Effects() {
+		if a, ok := e.(*effects.AudioSpeedEffect); ok && a.DurationFactor() > 0 {
+			rate /= a.DurationFactor()
+		}
+	}
+	return rate
+}
+
+// soundWindow is the source window [start, end) a clip's sound reads with
+// its handles, and lead, the silence (timeline time) needed in front when
+// the source has less than the head handle before the trim start.
+//
+// Handles are scaled by soundRate. With SpeedEffect.KeepAudioSpeed the
+// sound plays the source from the trim start at normal speed, so its tail
+// handle continues from where the clip's sound stops, and never past the
+// trim end (a slowed-down clip's sound has already ended: its tail handle
+// is silence). The end is limited to the source length when it is known;
+// the missing part becomes silence.
+func soundWindow(c clip.Clip, e clipEdge) (start, end, lead time.Duration) {
+	rate := soundRate(c)
+	start = c.TrimStart() - time.Duration(float64(e.head())*rate)
+	if start < 0 {
+		lead = time.Duration(float64(-start) / rate)
+		start = 0
+	}
+	if keepsAudioSpeed(c) {
+		end = min(c.TrimEnd(), c.TrimStart()+c.Duration()+e.tail())
+	} else {
+		end = c.TrimEnd() + time.Duration(float64(e.tail())*rate)
+	}
+	if src := clip.SourceDuration(c); src > 0 && end > src {
+		end = src
+	}
+	return start, end, lead
+}
+
+// formatPrecise formats a duration as seconds with microsecond precision,
+// for handle trims whose source times are scaled by a speed factor.
+func formatPrecise(d time.Duration) string {
+	return formatFloat(d.Seconds())
+}
+
+// joinWithTransitions joins the sorted, gap-filled clips of the base track.
+// Runs of clips joined by plain cuts are concatenated exactly as without
+// transitions; consecutive runs are joined at their transition with xfade
+// (picture) and acrossfade (sound). Each run's first clip starts with its
+// head handle and its last clip ends with its tail handle, so at a cut T
+// with transition d the left side lasts until T+After and the right side
+// starts at T-Before: xfade at offset T-Before for d, and acrossfade over
+// the last d of the left sound, give a stream exactly as long as the clips
+// themselves, with the sound in sync.
+func (c *Compiler) joinWithTransitions(labels []clipLabel, cfg Config) (string, string) {
+	hasAudio := anyAudio(labels)
+	var groups [][]clipLabel
+	for _, l := range labels {
+		if l.edge.in != nil || len(groups) == 0 {
+			groups = append(groups, nil)
+		}
+		groups[len(groups)-1] = append(groups[len(groups)-1], l)
+	}
+
+	var video, audio string
+	for gi, g := range groups {
+		v, a := g[0].video, g[0].audio
+		if len(g) > 1 {
+			v, a = c.concatSegments(g, hasAudio)
+		} else if hasAudio && a == "" {
+			a = c.silence(g[0].length())
+		}
+		if gi == 0 {
+			video, audio = v, a
+			continue
+		}
+		tr := g[0].edge.in
+		offset := g[0].entry.StartAt - tr.Before()
+		left := c.then(c.streamOf(video), "settb", "xtb", map[string]string{"expr": "AVTB"}, engine.StreamVideo)
+		right := c.then(c.streamOf(v), "settb", "xtb", map[string]string{"expr": "AVTB"}, engine.StreamVideo)
+		xf := c.graph.AddFilter("xfade", map[string]string{
+			"transition": xfadeName(tr.Type),
+			"duration":   formatSeconds(tr.Duration),
+			"offset":     formatSeconds(offset),
+		})
+		video = c.nextLabelFor("xfade", xf)
+		c.graph.Connect(left.node, xf, left.label, engine.StreamVideo)
+		c.graph.Connect(right.node, xf, right.label, engine.StreamVideo)
+		if hasAudio {
+			audio = c.crossfadeAudio(audio, a, tr)
+		}
+	}
+	return video, audio
+}
+
+// xfadeName maps a transition type to FFmpeg's xfade transition.
+func xfadeName(t TransitionType) string {
+	switch t {
+	case TransitionCrossfade:
+		return "fade"
+	}
+	return string(t)
+}
+
+// crossfadeAudio cross-fades the last tr.Duration of left with the first
+// tr.Duration of right (linear gain curves, like the picture's dissolve).
+func (c *Compiler) crossfadeAudio(left, right string, tr *Transition) string {
+	n := c.graph.AddFilter("acrossfade", map[string]string{
+		"d":  formatSeconds(tr.Duration),
+		"c1": "tri",
+		"c2": "tri",
+	})
+	out := c.nextLabelFor("axfade", n)
+	c.graph.Connect(c.findFilterByLabel(left), n, left, engine.StreamAudio)
+	c.graph.Connect(c.findFilterByLabel(right), n, right, engine.StreamAudio)
+	return out
+}
+
+// silence returns a silent stereo stream of length d.
+func (c *Compiler) silence(d time.Duration) string {
+	n := c.graph.AddFilter("anullsrc", map[string]string{"r": "48000", "cl": "stereo", "d": formatSeconds(d)})
+	return c.nextLabelFor("asilence", n)
+}
+
+// audioPiece is the sound of a clip with transitions, not yet shifted to
+// its start (it begins edge.head() before entry.StartAt). label is "" for a
+// clip without sound.
+type audioPiece struct {
+	label string
+	entry Placement
+	edge  clipEdge
+}
+
+// chainAudio joins sounds linked by transitions into chains with
+// acrossfade (a clip without sound counts as silence) and shifts each chain
+// to its first clip's start. It returns one label per chain that has sound.
+func (c *Compiler) chainAudio(pieces []audioPiece) []string {
+	sort.SliceStable(pieces, func(i, j int) bool { return pieces[i].entry.StartAt < pieces[j].entry.StartAt })
+	next := make([]int, len(pieces))
+	for i := range next {
+		next[i] = -1
+	}
+	for k, p := range pieces {
+		if p.edge.in == nil {
+			continue
+		}
+		for j, q := range pieces {
+			if j != k && q.edge.out != nil && q.entry.StartAt+q.entry.Clip.Duration() == p.entry.StartAt {
+				next[j] = k
+				break
+			}
+		}
+	}
+	var out []string
+	for h, p := range pieces {
+		if p.edge.in != nil {
+			continue // not the first clip of a chain
+		}
+		var chain []audioPiece
+		sound := false
+		for k := h; k >= 0; k = next[k] {
+			chain = append(chain, pieces[k])
+			sound = sound || pieces[k].label != ""
+		}
+		if !sound {
+			continue
+		}
+		label := ""
+		for _, m := range chain {
+			l := m.label
+			if l == "" {
+				l = c.silence(m.edge.head() + m.entry.Clip.Duration() + m.edge.tail())
+			}
+			if label == "" {
+				label = l
+				continue
+			}
+			label = c.crossfadeAudio(label, l, m.edge.in)
+		}
+		out = append(out, c.delayAudio(label, p.entry.StartAt))
+	}
+	return out
+}
+
+// textAlpha is textFadeAlpha for a text clip with transitions: it also
+// fades the text in over its transition in (starting edge.head() before
+// start) and out over its transition out (ending edge.tail() after end).
+// The clip's own fades apply to its own span only.
+func textAlpha(start, end, fadeIn, fadeOut time.Duration, edge clipEdge) string {
+	if !edge.extended() {
+		return textFadeAlpha(start, end, fadeIn, fadeOut)
+	}
+	var terms []string
+	if fadeIn > 0 {
+		terms = append(terms, fmt.Sprintf("if(lt(t,%s),1,(t-%s)/%s)", formatSeconds(start), formatSeconds(start), formatSeconds(fadeIn)))
+	}
+	if fadeOut > 0 {
+		terms = append(terms, fmt.Sprintf("if(gte(t,%s),1,(%s-t)/%s)", formatSeconds(end), formatSeconds(end), formatSeconds(fadeOut)))
+	}
+	if tr := edge.in; tr != nil {
+		terms = append(terms, fmt.Sprintf("(t-%s)/%s", formatSeconds(start-tr.Before()), formatSeconds(tr.Duration)))
+	}
+	if tr := edge.out; tr != nil {
+		terms = append(terms, fmt.Sprintf("(%s-t)/%s", formatSeconds(end+tr.After()), formatSeconds(tr.Duration)))
+	}
+	expr := terms[0]
+	for _, t := range terms[1:] {
+		expr = fmt.Sprintf("min(%s,%s)", expr, t)
+	}
+	return fmt.Sprintf("clip(%s,0,1)", expr)
 }
