@@ -212,10 +212,10 @@ func TestProject_CLIRender(t *testing.T) {
 		t.Errorf("wav override: %+v", m.Streams)
 	}
 
-	// A project that can't be rendered (transitions are still a known gap):
-	// nothing on stdout, problems on stderr.
-	p.Tracks[0].Clips = append(p.Tracks[0].Clips, project.Clip{ID: "c2", Type: project.ClipVideo, Media: id,
-		AtMS: 1000, InMS: 1000, OutMS: 1500, TransitionIn: &project.Transition{Type: project.TransitionCrossfade, DurationMS: 200}})
+	// A project that can't be rendered (a render blocker: the font file is
+	// missing): nothing on stdout, problems on stderr.
+	p.Tracks[0].Clips = append(p.Tracks[0].Clips, project.Clip{ID: "c2", Type: project.ClipText, Text: "x",
+		AtMS: 1000, DurationMS: 500, Style: &project.TextStyle{Font: &project.Font{File: "fonts/missing.ttf"}}})
 	project.Save(file, p)
 	cmd = exec.Command(bin, "render", file)
 	stdout.Reset()
@@ -224,7 +224,7 @@ func TestProject_CLIRender(t *testing.T) {
 	if err := cmd.Run(); err == nil {
 		t.Fatal("expected render to fail")
 	}
-	if stdout.Len() != 0 || !strings.Contains(stderr.String(), `/tracks/0/clips/1/transition_in: clip "c2": transition_in is not supported yet`) {
+	if stdout.Len() != 0 || !strings.Contains(stderr.String(), `/tracks/0/clips/1/style/font/file: clip "c2": font file not found: fonts/missing.ttf`) {
 		t.Errorf("stdout %q\nstderr %s", stdout.String(), stderr.String())
 	}
 }
@@ -311,5 +311,56 @@ func TestProject_RenderReelExample(t *testing.T) {
 	// Music (0.6 volume, faded) is audible; the footage's own sound is off.
 	if l := audioLevel(t, out, 5*time.Second, time.Second); l.MeanDB < -40 {
 		t.Errorf("music not audible: %.1f dB", l.MeanDB)
+	}
+}
+
+// examples/effects-transitions.json — speed effects, crossfades on the main
+// track and the music track, fades, normalize — has no render blockers and
+// renders: generated media at the example's paths (small, with the probed
+// durations), each source a solid color so the transitions can be seen.
+func TestProject_RenderTransitionsExample(t *testing.T) {
+	requireFilter(t, "loudnorm")
+	path := copyExample(t, "effects-transitions.json")
+	dir := filepath.Dir(path)
+	moveInto(t, genVideo(t, VideoSpec{FPS: 25, Color: "0xFF0000", ToneHz: 330, Dur: 60 * time.Second, FileName: "drive.mp4"}), dir, "clips/drive.mp4")
+	moveInto(t, genVideo(t, VideoSpec{FPS: 50, Color: "0x0000FF", ToneHz: 660, Dur: 20 * time.Second, FileName: "beach.mp4"}), dir, "clips/beach.mp4")
+	moveInto(t, genVideo(t, VideoSpec{FPS: 24, Color: "0x00FF00", Dur: 15 * time.Second, FileName: "sunset.mov"}), dir, "clips/sunset.mov")
+	song := filepath.Join(dir, "audio", "song.flac")
+	os.MkdirAll(filepath.Dir(song), 0o755)
+	runFFmpeg(t, "-f", "lavfi", "-i", "sine=f=440:sample_rate=48000:d=180", "-ac", "2", "-c:a", "flac", song)
+
+	r, p, err := project.CheckFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !r.OK() {
+		t.Fatalf("project errors %v, render blockers %v", r.ProjectErrors, r.RenderBlockers)
+	}
+	tl, err := project.Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, "travel.mp4")
+	prof := testProfile()
+	prof.Width, prof.Height = 320, 180
+	if err := tl.ExportSilent(prof, out); err != nil {
+		t.Fatal(err)
+	}
+	m := probe(t, out)
+	assertDuration(t, "video", m.Video().Duration, 27*time.Second, 25)
+	assertDuration(t, "audio", m.Audio().Duration, 27*time.Second, 25)
+
+	// Drive (red, 4x) 1-11 s, beach (blue) 11-19 s, sunset (green) 19-27 s;
+	// crossfades 10.5-11.5 s and 18.5-19.5 s.
+	assertPixel(t, out, 10300*time.Millisecond, cx, cy, Red, colorTol)
+	assertPixel(t, out, 11*time.Second, cx, cy, RGB{128, 0, 128}, colorTol)
+	assertPixel(t, out, 11700*time.Millisecond, cx, cy, Blue, colorTol)
+	assertPixel(t, out, 19*time.Second, cx, cy, RGB{0, 128, 128}, colorTol)
+	assertPixel(t, out, 20*time.Second, cx, cy, Green, colorTol)
+	// The music plays throughout, also across its 2 s crossfade at 15 s.
+	for _, at := range []time.Duration{5 * time.Second, 15 * time.Second, 22 * time.Second} {
+		if l := audioLevel(t, out, at, 500*time.Millisecond); l.MeanDB < -40 {
+			t.Errorf("no sound at %s: %.1f dB", at, l.MeanDB)
+		}
 	}
 }

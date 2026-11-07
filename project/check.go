@@ -13,10 +13,10 @@ import (
 //     loader rules L1–L7, L14 (specification section 12). It can't be loaded,
 //     saved or built until they're fixed.
 //   - RenderBlockers: the project is valid but can't be rendered right now —
-//     missing media used by enabled clips (L8), missing font files (L9), no
-//     enabled clips (L12), features the library can't render yet (L13,
-//     section 14: transitions). The project can still be loaded, edited
-//     and saved.
+//     missing media used by enabled clips (L8), missing font files or font
+//     families (L9), no enabled clips (L12). (L13, features the library
+//     can't render yet, is empty: the format has no known gaps, section
+//     14.) The project can still be loaded, edited and saved.
 //
 // Render blockers are only checked when there are no project errors
 // (RenderChecked reports whether they were). Warnings never block anything;

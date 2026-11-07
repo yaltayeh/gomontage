@@ -139,6 +139,18 @@ func (tl *Timeline) Validate() error {
 		}
 	}
 
+	// Check transitions: placement, handles and overlap (handle model).
+	for _, track := range tl.videoTracks {
+		if err := validateTransitions(track.Name(), track.entries); err != nil {
+			return err
+		}
+	}
+	for _, track := range tl.audioTracks {
+		if err := validateTransitions(track.Name(), track.entries); err != nil {
+			return err
+		}
+	}
+
 	// Check for overlapping clips on video tracks. A single video track
 	// can only show one clip at a time — overlapping placements are an error.
 	for _, track := range tl.videoTracks {

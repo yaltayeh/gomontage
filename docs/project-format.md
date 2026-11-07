@@ -140,7 +140,7 @@ interleaved in the array; only the relative order of video tracks matters.
   ([§9](#9-transitions)).
 - *Audio track:* clips may overlap freely; overlapping sound is mixed.
 - Gaps are allowed on every track: black on the bottom video track, transparent
-  on upper video tracks (see [Known gaps](#14-known-gaps-and-loader-behavior), bug #1), silence on audio.
+  on upper video tracks (§7), silence on audio.
 
 ---
 
@@ -404,7 +404,47 @@ records the expected message in `meta.expect_error`.
 - More types (`wipe_left`, `slide_up`, … from FFmpeg `xfade`) can be added later
   without a version change.
 
-Go API: **none yet** — see [Known gaps](#14-known-gaps-and-loader-behavior).
+### 9.4 Rendering
+
+How the renderer (phase 5) realizes §9.1–9.3:
+
+- **Bottom video track:** a true dissolve. Clips joined by plain cuts are
+  concatenated exactly as without transitions (a timeline without transitions
+  gets a byte-identical FFmpeg command); at each transition the two sides are
+  joined with `xfade=transition=fade` at offset `T − before` for `d`. The
+  left side runs until `T + after` (the outgoing clip's tail handle), the right
+  side starts at `T − before` (the incoming clip's head handle), so the result
+  is exactly as long as the clips.
+- **Upper video tracks:** each clip is still overlaid on its own (§7). Over
+  the window `[T − before, T + after)` the outgoing clip's opacity fades
+  linearly from 1 to 0 and the incoming clip's from 0 to 1, each with its
+  handle. Clips at different positions (e.g. two logos) each fade in place;
+  where two opaque clips cover each other, the layer beneath shows through
+  by up to 25 % at the midpoint, as with a cross dissolve on an upper track in
+  an editor. Text clips fade the same way.
+- **Sound** (audio tracks, and the sound of video clips on any video track):
+  clips linked by transitions are joined with `acrossfade` (linear gain on
+  both sides) over the same window as the picture, so picture and sound stay
+  in sync. A clip without sound in such a chain counts as silence.
+- **Sound handles.** The sound's handles use its own speed: the speed
+  factor when the sound follows the picture, 1 with `affect_audio: false`
+  (§9.1). With `affect_audio: false` the sound plays the source from `in_ms`
+  at normal speed, so its tail handle continues from where the clip's sound
+  stops and never goes past `out_ms`: a slowed-down clip's sound has already
+  ended, so its tail handle is silence. The loader (L14) checks the
+  picture's handles; if the source has less sound before `in_ms` than the
+  head handle needs (possible with `affect_audio: false` on a slowed-down
+  clip), the missing part is silence.
+- **Fades** cover the clip's own span only: the handles are shown unfaded
+  (`fade_in_ms` starts at `at_ms`, `fade_out_ms` ends at the clip's end).
+
+Go API: `timeline.Crossfade(d)` (a `timeline.Transition{Type, Duration}`),
+`VideoTrack.AddWithTransition(clip, at, tr)` / `AudioTrack.AddWithTransition`,
+and the `Placement.TransitionIn` field. `Timeline.Validate` checks the same
+rules as L14 for timelines built in Go (handles are checked when a clip's
+source length is known, e.g. probed or from `clip.NewVideoFromInfo`).
+`Timeline.SubRange` keeps a transition only when its whole window lies inside
+the range; otherwise the cut becomes a plain cut.
 
 ---
 
@@ -513,7 +553,7 @@ at-most-once effects, integer times.
 | L10 | Fingerprint differs from the file. | warning |
 | L11 | `volume ≠ 1` or a `normalize` effect on a clip that produces no sound (`include_audio: false`, or media without audio). | warning |
 | L12 | At least one enabled clip (for rendering). | error on render |
-| L13 | Features the library can't render yet (§14). | error on render (Build) — a project using them still loads, so tools can open and edit it |
+| L13 | Features the library can't render yet (§14). None at present: every feature of the format renders. | error on render (Build) — a project using them still loads, so tools can open and edit it |
 | L14 | Transition placement and handles: not on a track's first clip, previous clip directly adjacent and unique, enough source before `in_ms` / after `out_ms`, transitions on one clip don't overlap (§9.2, exact messages there). | error |
 
 Warnings never block loading; `Load` returns them alongside the project.
@@ -525,7 +565,7 @@ and by `gomontage validate <file>`:
 | Group | Rules | Meaning |
 |---|---|---|
 | **Project errors** | schema, L1–L7, L14 | The file is invalid; it can't be loaded, built or saved until fixed. |
-| **Render blockers** | L8 (media used by enabled clips), L9, L12, L13 (transitions) | The file is valid and can be loaded, edited and saved, but can't be rendered now. Only checked when there are no project errors. |
+| **Render blockers** | L8 (media used by enabled clips), L9, L12 (and L13, currently empty) | The file is valid and can be loaded, edited and saved, but can't be rendered now. Only checked when there are no project errors. |
 
 Warnings (L8 for media not used by enabled clips, L10, L11) never block
 anything; a missing media file that is a render blocker is not repeated as a
@@ -540,7 +580,7 @@ per-render overrides of the preset/output file (`RenderTarget`).
 Project errors: none
 Render blockers (2):
   /media/0: media "m_intro": file not found: media/intro.mp4
-  /tracks/0/clips/2/transition_in: clip "c_beach": transition_in is not supported yet
+  /tracks/2/clips/0/style/font/file: clip "c_title": font file not found: fonts/Title.ttf
 Warnings: none
 my.gomontage.json: valid but cannot be rendered yet (0 project errors, 2 render blockers, 0 warnings)
 ```
@@ -617,9 +657,11 @@ the clip, or at the field when one field is at fault.
 
 ## 14. Known gaps and loader behavior
 
-The format is defined ahead of the library. Principle: **the loader never
-silently renders something different from what the file says.** Anything the
-library cannot render yet is an **error at render time** (`project.Build`,
+The format was defined ahead of the library; since phase 5 the library
+renders all of it, so there are **no known gaps**. Principle: **the loader
+never silently renders something different from what the file says.** Anything
+the library cannot render (a future feature added to the format first) is an
+**error at render time** (`project.Build`,
 `gomontage render`/`validate`) naming the field, the item ID and the reason, so
 a tool or agent can remove or change it. Such projects still **load**, so they
 can be opened and edited. Purely informational mismatches are warnings.
@@ -627,7 +669,7 @@ Messages below are exact; pointers are the clip, track or field named.
 
 | Format feature | Library status | Behavior |
 |---|---|---|
-| `transition_in` | Not implemented: no `xfade`/`acrossfade`, and the compiler can't yet read handle footage beyond a clip's in/out points. The L14 checks (placement, handles) still run first, so a project is only rejected for this once its transitions are otherwise valid. | **render blocker**: `clip "c_beach": transition_in is not supported yet` (pointer `…/transition_in`) |
+| `transition_in` (`crossfade`) | Supported (phase 5): handle model on every track kind — `xfade` on the bottom track, opacity crossfades on upper tracks, `acrossfade` for sound (§9.4). | — |
 | Clips on upper video tracks | Supported (phase 4, known bug #1 fixed): upper tracks are composited clip by clip with alpha; gaps, padding and text backgrounds are transparent. | — |
 | `position`, `anchor`, `size` (incl. `fit` contain/cover/stretch) | Supported (phase 4, known bug #2 fixed) on video, image, color and text clips, on any track. On the bottom track a clip that doesn't fill the canvas sits on black. | — |
 | `output.fit: "cover"` | Supported (phase 4): scale to fill the preset size, centre-crop. | — |
@@ -638,11 +680,8 @@ Messages below are exact; pointers are the clip, track or field named.
 | Fades on sped-up clips | Supported (bug #12). | — |
 | `enabled: false` | Loader-only. | — |
 
-When transitions are implemented the last blocker goes away; no format change
-is needed. All examples load. `simple-trim-concat.json`, `podcast-audio.json`
-and `reel-arabic-overlay.json` render; `effects-transitions.json` fails `Build`
-only with its three `transition_in` blockers (asserted in
-`project/build_test.go`).
+All examples load, have no render blockers and render (asserted in
+`project/build_test.go`, `project/check_test.go` and the e2e suite).
 
 ---
 
@@ -673,7 +712,7 @@ only with its three `transition_in` blockers (asserted in
 | [`simple-trim-concat.json`](../examples/simple-trim-concat.json) | Trim + back-to-back sequence, fades, fingerprint | yes |
 | [`reel-arabic-overlay.json`](../examples/reel-arabic-overlay.json) | 9:16 reel, Arabic text with box and outline (El Messiri by family and by file), logo overlay, music with `volume`, `cover` | yes |
 | [`podcast-audio.json`](../examples/podcast-audio.json) | Audio-only WAV, sound from a video file, normalize, disabled track, `meta` | yes |
-| [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades (video and audio tracks), color clip, normalize + `volume` | no — transitions (§14) |
+| [`effects-transitions.json`](../examples/effects-transitions.json) | Speed up/slow down, crossfades (video and audio tracks), color clip, normalize + `volume` | yes |
 
 ---
 

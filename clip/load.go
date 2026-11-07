@@ -111,3 +111,11 @@ func SourceProblem(c Clip) error {
 	}
 	return nil
 }
+
+// SourceDuration returns the probed length of c's source file, or 0 if it is
+// unknown (images, generated clips, clips built with New*WithDuration, or a
+// source that couldn't be probed). Timeline validation uses it to check that
+// a transition's handles fit in the source.
+func SourceDuration(c Clip) time.Duration {
+	return c.base().sourceDuration
+}

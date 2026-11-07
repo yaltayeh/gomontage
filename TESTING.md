@@ -4,8 +4,8 @@ There are two layers of tests.
 
 | Suite | Command | Needs FFmpeg | What it checks |
 |---|---|---|---|
-| Unit | `go test ./...` or `make test` | No | Graph/command shape, clip/timeline logic |
-| Project package | `go test ./project/` (part of `go test ./...`) | No | Loader rules and exact messages (each `schema/testdata/loader` fixture produces exactly its recorded error), canonical Save (round trip, byte-stable, defaults omitted, examples are canonical), Build (DryRun of `simple-trim-concat` equals the hand-written Go timeline; known-gap errors for the other examples) |
+| Unit | `go test ./...` or `make test` | No | Graph/command shape, clip/timeline logic. `timeline/testdata/no_transitions.golden` holds the FFmpeg commands of timelines without transitions, recorded before transitions were implemented: they must stay byte-identical (regenerate with `GOMONTAGE_UPDATE_GOLDEN=1` only for an intended change) |
+| Project package | `go test ./project/` (part of `go test ./...`) | No | Loader rules and exact messages (each `schema/testdata/loader` fixture produces exactly its recorded error), canonical Save (round trip, byte-stable, defaults omitted, examples are canonical), Build (DryRun of `simple-trim-concat` equals the hand-written Go timeline; every example builds with no render blockers; transitions map to timeline transitions) |
 | Project schema | `go test ./schema/` (part of `go test ./...`) | No | `schema/project.v1.schema.json` compiles, every file in `examples/` validates, invalid projects are rejected with useful errors, and the loader-level fixtures in `schema/testdata/loader/` are schema-valid and declare their expected loader error |
 | End-to-end | `go test -tags e2e ./e2e/...` or `make test-e2e` | Yes | Real renders: durations, pixel colors, audio levels, codecs |
 
@@ -31,6 +31,13 @@ plain `go test ./...` stays fast and never calls FFmpeg.
   missing.
 - If `ffmpeg`/`ffprobe` are not on `PATH`, every e2e test skips with a clear
   message.
+- Transition tests (`e2e/transitions_test.go`) check the blend at the
+  midpoint and the pure colors outside the window, that the output length is
+  unchanged, that handle frames come from beyond the trim points (sources
+  whose color changes over time), speed-scaled handles, audio crossfade levels
+  and A/V sync over several transitions, upper-track logos, and audio tracks.
+  `TestProject_RenderTransitionsExample` renders
+  `examples/effects-transitions.json`.
 
 ### Known-bug tests
 

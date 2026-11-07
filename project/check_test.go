@@ -54,15 +54,16 @@ func TestCheckFile_RenderBlockersAndNoDuplicateWarnings(t *testing.T) {
 	}
 }
 
-func TestCheck_KnownGapsAreRenderBlockers(t *testing.T) {
+// The format has no known gaps: transitions (phase 5) and output.fit
+// "cover" (phase 4) are not render blockers.
+func TestCheck_NoKnownGaps(t *testing.T) {
 	p := loadExampleWithFiles(t, "effects-transitions.json")
 	r := Check(p)
-	if len(r.ProjectErrors) != 0 || len(r.RenderBlockers) != 3 || r.OK() {
+	if !r.OK() || !r.RenderChecked {
 		t.Errorf("result: errors %v blockers %v", r.ProjectErrors, lines(r.RenderBlockers))
 	}
-	// output.fit "cover" is supported (phase 4): not a blocker.
 	p.Output.Fit = FitCover
-	if r = Check(p); len(r.RenderBlockers) != 3 {
+	if r = Check(p); !r.OK() {
 		t.Errorf("render blockers %v", lines(r.RenderBlockers))
 	}
 }

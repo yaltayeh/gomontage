@@ -31,5 +31,11 @@
   questions. Never merge PRs yourself — the owner reviews and merges.
 - If a branch already has an open PR, just push new commits to it instead of
   opening another.
+- **Preview images** (rendered frames for a PR): never commit them to `main` or
+  a feature branch, and don't use draft releases (their asset URLs may not
+  render for viewers). Push them to the orphan branch `pr-previews`, which
+  holds only images and is never merged into `main`, under `<pr-number>/...`
+  (add a commit; never rewrite the branch). Link them in the PR body via
+  `https://raw.githubusercontent.com/yaltayeh/gomontage/pr-previews/<pr-number>/<file>`.
 - **End every task with:** branch, commits (hash + message), test results,
   push status, PR URL.

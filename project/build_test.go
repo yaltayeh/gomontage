@@ -163,16 +163,38 @@ func TestBuild_ReelExample(t *testing.T) {
 	}
 }
 
-// Transitions are the only known gap left.
-func TestBuild_TransitionsAreTheOnlyKnownGap(t *testing.T) {
-	_, err := Build(loadExampleWithFiles(t, "effects-transitions.json"))
-	want := []string{
-		`/tracks/0/clips/2/transition_in: clip "c_beach": transition_in is not supported yet`,
-		`/tracks/0/clips/3/transition_in: clip "c_sunset": transition_in is not supported yet`,
-		`/tracks/1/clips/1/transition_in: clip "c_song_b": transition_in is not supported yet`,
+// The format has no known gaps left: effects-transitions.json builds, and
+// its transitions map to timeline transitions (handle model).
+func TestBuild_Transitions(t *testing.T) {
+	p := loadExampleWithFiles(t, "effects-transitions.json")
+	tl, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := problemLines(t, err); !reflect.DeepEqual(got, want) {
-		t.Errorf("problems:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	if tl.Duration() != 27*time.Second {
+		t.Errorf("duration %s, want 27s (transitions never change it)", tl.Duration())
+	}
+	main := tl.VideoTracks()[0].Entries()
+	want := []*timeline.Transition{nil, nil, {Type: timeline.TransitionCrossfade, Duration: time.Second}, {Type: timeline.TransitionCrossfade, Duration: time.Second}}
+	for i, e := range main {
+		if !reflect.DeepEqual(e.TransitionIn, want[i]) {
+			t.Errorf("main clip %d transition %+v, want %+v", i, e.TransitionIn, want[i])
+		}
+	}
+	music := tl.AudioTracks()[0].Entries()
+	if tr := music[1].TransitionIn; tr == nil || tr.Duration != 2*time.Second || music[0].TransitionIn != nil {
+		t.Errorf("music transitions %+v %+v", music[0].TransitionIn, music[1].TransitionIn)
+	}
+	cmd, err := tl.DryRun(export.YouTube1080p(), filepath.Join(p.Dir(), "out.mp4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// c_drive -> c_beach at 11 s and c_beach -> c_sunset at 19 s (1 s each);
+	// the music crossfades over 2 s.
+	for _, s := range []string{"xfade=duration=1.000:offset=10.500:transition=fade", "xfade=duration=1.000:offset=18.500:transition=fade", "acrossfade=c1=tri:c2=tri:d=2.000"} {
+		if !strings.Contains(cmd.String(), s) {
+			t.Errorf("command lacks %q", s)
+		}
 	}
 }
 
