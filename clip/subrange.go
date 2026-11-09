@@ -13,8 +13,10 @@ import "time"
 // start and end are clamped to [0, clip.Duration()]. If the window is empty
 // (start >= end after clamping), nil is returned.
 //
-// Effects, volume, fades, and other properties are preserved on the returned
-// clip.
+// Effects, volume, layout and other properties are preserved on the returned
+// clip. Fades are kept unless the window leaves them out entirely (a
+// fade-in that ends before start, a fade-out that starts at or after end),
+// so the piece doesn't fade at the cut.
 func SubRange(c Clip, start, end time.Duration) Clip {
 	dur := c.Duration()
 
@@ -36,17 +38,43 @@ func SubRange(c Clip, start, end time.Duration) Clip {
 
 	switch v := c.(type) {
 	case *VideoClip:
-		return subRangeVideo(v, start, end)
+		n := subRangeVideo(v, start, end)
+		dropCutFades(&n.Base, start, end, dur)
+		return n
 	case *AudioClip:
-		return subRangeAudio(v, start, end)
+		n := subRangeAudio(v, start, end)
+		dropCutFades(&n.Base, start, end, dur)
+		return n
 	case *ImageClip:
-		return subRangeImage(v, end-start)
+		n := subRangeImage(v, end-start)
+		dropCutFades(&n.Base, start, end, dur)
+		return n
 	case *ColorClip:
-		return subRangeColor(v, end-start)
+		n := subRangeColor(v, end-start)
+		dropCutFades(&n.Base, start, end, dur)
+		return n
 	case *TextClip:
-		return subRangeText(v, end-start)
+		n := subRangeText(v, end-start)
+		dropCutFades(&n.Base, start, end, dur)
+		return n
 	default:
 		return nil
+	}
+}
+
+// dropCutFades removes the fades the window [start, end) of a clip of
+// length dur leaves out entirely: a fade-in that ends before start, a
+// fade-out that starts at or after end. Without this the piece would fade in
+// (or out) again at the cut. A fade the window cuts through is kept with its
+// full length, so it restarts at the cut (a partial fade can't be
+// expressed); callers that need exact pixels there, such as a one-frame
+// preview, should widen the window to the clip's edge.
+func dropCutFades(b *Base, start, end, dur time.Duration) {
+	if b.fadeIn > 0 && start >= b.fadeIn {
+		b.fadeIn = 0
+	}
+	if b.fadeOut > 0 && end <= dur-b.fadeOut {
+		b.fadeOut = 0
 	}
 }
 

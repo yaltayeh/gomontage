@@ -223,7 +223,8 @@ func TestSubRange_PreservesProperties(t *testing.T) {
 	v := NewVideoWithDuration("test.mp4", 30*time.Second)
 	v = v.WithVolume(0.5).WithFadeIn(2 * time.Second)
 
-	result := SubRange(v, 5*time.Second, 25*time.Second)
+	// The window starts inside the fade-in, so the fade is kept.
+	result := SubRange(v, 1*time.Second, 25*time.Second)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -396,7 +397,8 @@ func TestSubRange_PreservesFadeOut(t *testing.T) {
 	v := NewVideoWithDuration("test.mp4", 30*time.Second).
 		WithFadeOut(3 * time.Second)
 
-	result := SubRange(v, 5*time.Second, 25*time.Second)
+	// The window ends inside the fade-out (27s..30s), so the fade is kept.
+	result := SubRange(v, 5*time.Second, 28*time.Second)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -498,7 +500,8 @@ func TestSubRange_AudioClip_PreservesProperties(t *testing.T) {
 		WithFadeIn(2 * time.Second).
 		WithFadeOut(5 * time.Second)
 
-	result := SubRange(a, 10*time.Second, 50*time.Second)
+	// The window cuts through both fades (0..2s and 55..60s), so both stay.
+	result := SubRange(a, 1*time.Second, 58*time.Second)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -521,7 +524,8 @@ func TestSubRange_ImageClip_PreservesProperties(t *testing.T) {
 		WithFadeIn(1 * time.Second).
 		WithFadeOut(1 * time.Second)
 
-	result := SubRange(img, 2*time.Second, 8*time.Second)
+	// The window cuts through both fades (0..1s and 9..10s), so both stay.
+	result := SubRange(img, 500*time.Millisecond, 9500*time.Millisecond)
 	if result == nil {
 		t.Fatal("expected non-nil result")
 	}
@@ -696,5 +700,41 @@ func TestSubRange_TextClip_TrimMetadata(t *testing.T) {
 	}
 	if result.TrimStart() != 0 {
 		t.Errorf("expected TrimStart 0, got %v", result.TrimStart())
+	}
+}
+
+// A window that leaves a fade out entirely drops it, so the piece doesn't
+// fade in or out again at the cut.
+func TestSubRange_DropsFadesOutsideWindow(t *testing.T) {
+	v := NewVideoWithDuration("test.mp4", 30*time.Second).
+		WithFadeIn(2 * time.Second).
+		WithFadeOut(3 * time.Second)
+	cases := []struct {
+		name            string
+		start, end      time.Duration
+		wantIn, wantOut time.Duration
+	}{
+		{"middle", 5 * time.Second, 25 * time.Second, 0, 0},
+		{"exactly after fade-in, up to fade-out", 2 * time.Second, 27 * time.Second, 0, 0},
+		{"inside fade-in", 1 * time.Second, 20 * time.Second, 2 * time.Second, 0},
+		{"inside fade-out", 10 * time.Second, 29 * time.Second, 0, 3 * time.Second},
+		{"head", 0, 10 * time.Second, 2 * time.Second, 0},
+		{"tail", 20 * time.Second, 30 * time.Second, 0, 3 * time.Second},
+	}
+	for _, tc := range cases {
+		r := SubRange(v, tc.start, tc.end)
+		if r.FadeInDuration() != tc.wantIn || r.FadeOutDuration() != tc.wantOut {
+			t.Errorf("%s: fades = %v/%v, want %v/%v", tc.name, r.FadeInDuration(), r.FadeOutDuration(), tc.wantIn, tc.wantOut)
+		}
+	}
+	for _, c := range []Clip{
+		NewColor("#FF0000", 0, 0).WithDuration(10 * time.Second).WithFadeIn(time.Second),
+		NewText("hi", TextStyle{}).WithDuration(10 * time.Second).WithFadeIn(time.Second),
+		NewImage("logo.png").WithDuration(10 * time.Second).WithFadeIn(time.Second),
+		NewAudioWithDuration("a.wav", 10*time.Second).WithFadeIn(time.Second),
+	} {
+		if r := SubRange(c, 5*time.Second, 8*time.Second); r.FadeInDuration() != 0 {
+			t.Errorf("%T: fade-in kept after the window cut it away", c)
+		}
 	}
 }
