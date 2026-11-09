@@ -17,6 +17,9 @@ func TestOutputStreams(t *testing.T) {
 		{"GIF preset", GIF(), "out.gif", true, false},
 		{"format from extension", NewProfile().Build(), "song.M4A", false, true},
 		{"gif extension", NewProfile().Build(), "anim.gif", true, false},
+		{"still image (image2)", &Profile{Format: "image2"}, "frame.jpg", true, false},
+		{"jpg extension", NewProfile().Build(), "frame.JPG", true, false},
+		{"png extension", NewProfile().Build(), "frame.png", true, false},
 		{"unknown extension", NewProfile().Build(), "out.xyz", true, true},
 	}
 	for _, tt := range tests {
