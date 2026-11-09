@@ -547,7 +547,7 @@
       }
     },
     "transition": {
-      "description": "A transition at the cut between this clip and the previous clip on the same track (the clip that ends exactly at this clip's at_ms). Handle model: clips stay butt-joined and the transition is centred on the cut, so adding or removing a transition never changes any at_ms or any duration. For a transition of d ms, the incoming clip starts showing floor(d/2) ms before the cut, using source footage from before its in_ms, and the outgoing clip keeps playing ceil(d/2) ms after the cut, using source footage from after its out_ms (scaled by each clip's speed factor). Image, text and color clips have unlimited handles. Not allowed on the first clip of a track or after a gap. Not rendered yet by the current library (see docs/project-format.md, Known gaps).",
+      "description": "A transition at the cut between this clip and the previous clip on the same track (the clip that ends exactly at this clip's at_ms). Handle model: clips stay butt-joined and the transition is centred on the cut, so adding or removing a transition never changes any at_ms or any duration. For a transition of d ms, the incoming clip starts showing floor(d/2) ms before the cut, using source footage from before its in_ms, and the outgoing clip keeps playing ceil(d/2) ms after the cut, using source footage from after its out_ms (scaled by each clip's speed factor). Image, text and color clips have unlimited handles. Not allowed on the first clip of a track or after a gap. Rendering: see docs/project-format.md §9.4.",
       "type": "object",
       "required": [
         "type",

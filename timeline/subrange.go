@@ -51,10 +51,14 @@ func (tl *Timeline) SubRange(start, end time.Duration) *Timeline {
 // trackAdder is satisfied by both VideoTrack and AudioTrack.
 type trackAdder interface {
 	Add(c clip.Clip, startAt time.Duration)
+	AddWithTransition(c clip.Clip, startAt time.Duration, tr Transition)
 }
 
 // filterPlacements examines each placement against the [rangeStart, rangeEnd)
 // window and adds the visible portion to the target track with a shifted StartAt.
+// A transition is kept when its whole window [cut-Before, cut+After) is inside
+// the range (both clips are then present around the cut); a transition cut
+// by the range boundary becomes a plain cut.
 func filterPlacements(entries []Placement, rangeStart, rangeEnd time.Duration, target trackAdder) {
 	for _, entry := range entries {
 		clipStart := entry.StartAt
@@ -88,6 +92,10 @@ func filterPlacements(entries []Placement, rangeStart, rangeEnd time.Duration, t
 			newStart = 0
 		}
 
+		if tr := entry.TransitionIn; tr != nil && clipStart-tr.Before() >= rangeStart && clipStart+tr.After() <= rangeEnd {
+			target.AddWithTransition(trimmed, newStart, *tr)
+			continue
+		}
 		target.Add(trimmed, newStart)
 	}
 }

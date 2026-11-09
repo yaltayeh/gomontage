@@ -23,6 +23,10 @@ type Placement struct {
 
 	// Clip is the media clip placed at this position.
 	Clip clip.Clip
+
+	// TransitionIn, if set, joins the clip to the clip that ends exactly at
+	// StartAt on the same track (see AddWithTransition).
+	TransitionIn *Transition
 }
 
 // At creates a Placement that starts a clip at the given time on the timeline.

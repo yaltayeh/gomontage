@@ -32,8 +32,8 @@ func Validate(p *Project) ([]Warning, error) {
 //
 // Build runs Check first: project errors (schema, loader rules) or, if there
 // are none, render blockers (missing media used by enabled clips, missing
-// font files, no enabled clips, features the library can't render yet —
-// specification section 14) are returned in a *ValidationError, so a project
+// font files or font families, no enabled clips) are returned in a
+// *ValidationError, so a project
 // is never rendered differently from what the file says. output.fit is not
 // checked here (it doesn't affect the timeline); RenderTarget and Check do.
 //
@@ -64,18 +64,25 @@ func Build(p *Project) (*timeline.Timeline, error) {
 		if name == "" {
 			name = t.ID
 		}
-		var add func(clip.Clip, time.Duration)
+		var track interface {
+			Add(clip.Clip, time.Duration)
+			AddWithTransition(clip.Clip, time.Duration, timeline.Transition)
+		}
 		if t.Kind == KindVideo {
-			add = tl.AddVideoTrack(name).Add
+			track = tl.AddVideoTrack(name)
 		} else {
-			add = tl.AddAudioTrack(name).Add
+			track = tl.AddAudioTrack(name)
 		}
 		for _, c := range sortedClips(t.Clips) {
 			gc, err := buildClip(q, c)
 			if err != nil {
 				return nil, err
 			}
-			add(gc, ms(c.AtMS))
+			if tr := c.TransitionIn; tr != nil {
+				track.AddWithTransition(gc, ms(c.AtMS), timeline.Transition{Type: timeline.TransitionType(tr.Type), Duration: ms(tr.DurationMS)})
+				continue
+			}
+			track.Add(gc, ms(c.AtMS))
 		}
 	}
 	if err := tl.Validate(); err != nil {
@@ -272,8 +279,8 @@ func withFades[T fader[T]](c T, pc *Clip) clip.Clip {
 	return c
 }
 
-// renderProblems runs the render-time checks L8, L9, L12 and L13 on a
-// validated project.
+// renderProblems runs the render-time checks L8, L9 and L12 on a validated
+// project (L13 has no checks left).
 func renderProblems(p *Project) []Problem {
 	r := &ruleRun{p: p}
 	usedMedia := map[string]bool{}
@@ -314,13 +321,10 @@ func renderProblems(p *Project) []Problem {
 	return append(missing, r.problems...)
 }
 
-// checkRenderableClip runs L9 (fonts) and the clip-level L13 check (the only
-// known gap left: transitions).
+// checkRenderableClip runs L9 (fonts). (L13, features the library can't
+// render yet, has no checks left: the format has no known gaps.)
 func (r *ruleRun) checkRenderableClip(ti, ci int, c *Clip) {
 	path := clipPath(ti, ci)
-	if c.TransitionIn != nil {
-		r.fail(path+"/transition_in", "clip %q: transition_in is not supported yet", c.ID)
-	}
 	if c.Type != ClipText || c.Style == nil || c.Style.Font == nil {
 		return
 	}

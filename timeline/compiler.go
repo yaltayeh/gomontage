@@ -190,16 +190,24 @@ func (c *Compiler) compile(outputPath string, outputParams map[string]string, op
 		}
 		entries := append([]Placement(nil), track.Entries()...)
 		sort.SliceStable(entries, func(i, j int) bool { return entries[i].StartAt < entries[j].StartAt })
-		for _, entry := range entries {
-			v, a, err := c.compileOverlayClip(entry, cfg, finalVideoLabel)
+		edges := make([]clipEdge, len(entries))
+		if hasTransitions(entries) {
+			edges = trackEdges(entries)
+		}
+		var pieces []audioPiece // sounds of clips with transitions
+		for i, entry := range entries {
+			v, a, err := c.compileOverlayClipEdge(entry, cfg, finalVideoLabel, edges[i])
 			if err != nil {
 				return nil, fmt.Errorf("track %q: %w", track.Name(), err)
 			}
 			finalVideoLabel = v
-			if a != "" {
+			if edges[i].extended() {
+				pieces = append(pieces, audioPiece{label: a, entry: entry, edge: edges[i]})
+			} else if a != "" {
 				videoAudioLabels = append(videoAudioLabels, a)
 			}
 		}
+		videoAudioLabels = append(videoAudioLabels, c.chainAudio(pieces)...)
 	}
 
 	// Phase 3: Process independent audio tracks (narration, bgm, sfx, etc.).
@@ -209,15 +217,24 @@ func (c *Compiler) compile(outputPath string, outputParams map[string]string, op
 	// Prepend audio from video tracks so it is mixed with independent audio.
 	audioLabels = append(audioLabels, videoAudioLabels...)
 	for _, track := range c.timeline.audioTracks {
-		for _, entry := range track.Entries() {
-			label, err := c.compileAudioEntry(entry)
+		entries := track.Entries()
+		edges := make([]clipEdge, len(entries))
+		if hasTransitions(entries) {
+			edges = trackEdges(entries)
+		}
+		var pieces []audioPiece // clips joined by transitions
+		for i, entry := range entries {
+			label, err := c.compileAudioEntryEdge(entry, edges[i], !edges[i].extended())
 			if err != nil {
 				return nil, fmt.Errorf("audio track %q: %w", track.Name(), err)
 			}
-			if label != "" {
+			if edges[i].extended() {
+				pieces = append(pieces, audioPiece{label: label, entry: entry, edge: edges[i]})
+			} else if label != "" {
 				audioLabels = append(audioLabels, label)
 			}
 		}
+		audioLabels = append(audioLabels, c.chainAudio(pieces)...)
 	}
 
 	// Phase 4: Mix all audio streams together.
@@ -297,21 +314,24 @@ func (c *Compiler) compileTrack(track *VideoTrack, cfg Config, timelineDur time.
 	// clip by clip), so its clips are opaque and fade to/from black.
 	isOverlay := false
 
-	// Step 1: compile every clip entry on this track.
+	// Step 1: compile every clip entry on this track (with its handles if
+	// it has transitions).
+	entries := track.Entries()
+	transitions := hasTransitions(entries)
+	edges := make([]clipEdge, len(entries))
+	if transitions {
+		edges = trackEdges(entries)
+	}
 	var labels []clipLabel
-	for _, entry := range track.Entries() {
-		cls, err := c.compileVideoEntry(entry, cfg, isOverlay)
+	for i, entry := range entries {
+		cls, err := c.compileVideoEntryEdge(entry, cfg, isOverlay, edges[i])
 		if err != nil {
 			return trackStream{}, err
 		}
 		// Compile embedded audio from video clips.
 		for i, cl := range cls {
 			if cl.entry.Clip.HasAudio() && cl.entry.Clip.SourcePath() != "" {
-				audioLabel, err := c.compileAudioFromVideoEntry(cl.entry)
-				if err != nil {
-					return trackStream{}, fmt.Errorf("audio: %w", err)
-				}
-				cls[i].audio = audioLabel
+				cls[i].audio = c.compileClipAudio(cl.entry, cl.edge, "va")
 			}
 		}
 		labels = append(labels, cls...)
@@ -354,7 +374,11 @@ func (c *Compiler) compileTrack(track *VideoTrack, cfg Config, timelineDur time.
 			}
 		}
 	default:
-		videoLabel, audioLabel = c.concatVideoClips(labels)
+		if transitions {
+			videoLabel, audioLabel = c.joinWithTransitions(labels, cfg)
+		} else {
+			videoLabel, audioLabel = c.concatVideoClips(labels)
+		}
 	}
 
 	// Step 4: if the track is shorter than the full timeline, pad the tail with
@@ -463,6 +487,14 @@ type clipLabel struct {
 	video string
 	audio string
 	entry Placement
+	// edge holds the clip's transitions; its streams then include the
+	// handles (edge.head() before the clip, edge.tail() after it).
+	edge clipEdge
+}
+
+// length is the duration of the clip's streams, handles included.
+func (cl clipLabel) length() time.Duration {
+	return cl.edge.head() + cl.entry.Clip.Duration() + cl.edge.tail()
 }
 
 // compileVideoEntry processes a single video clip placement into filter nodes.
@@ -475,7 +507,18 @@ type clipLabel struct {
 //     the RGB values — this makes the clip fade in/out through transparency instead
 //     of fading to/from black.
 func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool) ([]clipLabel, error) {
+	return c.compileVideoEntryEdge(entry, cfg, isOverlay, clipEdge{})
+}
+
+// compileVideoEntryEdge is compileVideoEntry for a clip with transitions:
+// the stream also contains the handles, edge.head() of footage before the
+// clip and edge.tail() after it (source beyond the trim points for video
+// files; a still picture, color or text simply lasts longer). The clip's own
+// fades stay on its own span; the handles are not faded.
+func (c *Compiler) compileVideoEntryEdge(entry Placement, cfg Config, isOverlay bool, edge clipEdge) ([]clipLabel, error) {
 	cl := entry.Clip
+	head := edge.head()
+	streamDur := head + cl.Duration() + edge.tail()
 	path := cl.SourcePath()
 	pl := clip.ResolvePlacement(cl, cfg.Width, cfg.Height)
 	// A base-layer clip that isn't full-frame (custom layout, or a
@@ -487,7 +530,7 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 
 	if path == "" {
 		// Generated clips (color, text) — use source filters.
-		genLabel, genNode, canvas, err := c.compileGeneratedClip(entry, cfg, pl, isOverlay)
+		genLabel, genNode, canvas, err := c.compileGeneratedClip(entry, cfg, pl, isOverlay, streamDur)
 		needsCanvas = canvas
 		if err != nil {
 			return nil, err
@@ -497,7 +540,7 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 	} else {
 		var inputNode *engine.Node
 		if cl.ClipType() == clip.TypeImage {
-			inputNode = c.getOrAddInputKey(imageInputKey(path, cl.Duration()), path)
+			inputNode = c.getOrAddInputKey(imageInputKey(path, streamDur), path)
 		} else {
 			inputNode = c.getOrAddInput(path)
 		}
@@ -509,19 +552,25 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		if cl.ClipType() == clip.TypeImage {
 			inputNode.Params["-loop"] = "1"
 			inputNode.Params["-framerate"] = fmt.Sprintf("%g", cfg.FPS)
-			inputNode.Params["-t"] = formatSeconds(cl.Duration())
+			inputNode.Params["-t"] = formatSeconds(streamDur)
 		}
 
 		// Start with the raw video stream.
 		currentLabel = fmt.Sprintf("%d:v", inputIdx)
 		lastNode = inputNode
 
-		// Apply trim if needed.
-		if cl.IsTrimmed() {
-			trimNode := c.graph.AddFilter("trim", map[string]string{
+		// Apply trim if needed. Handles extend the window into the source
+		// (scaled by the clip's speed).
+		if cl.IsTrimmed() || (edge.extended() && hasSourceWindow(cl)) {
+			trimParams := map[string]string{
 				"start": formatSeconds(cl.TrimStart()),
 				"end":   formatSeconds(cl.TrimEnd()),
-			})
+			}
+			if edge.extended() {
+				start, end := pictureWindow(cl, edge)
+				trimParams["start"], trimParams["end"] = formatPrecise(start), formatPrecise(end)
+			}
+			trimNode := c.graph.AddFilter("trim", trimParams)
 			trimLabel := c.nextLabelFor("vtrim", trimNode)
 			c.graph.Connect(lastNode, trimNode, currentLabel, engine.StreamVideo)
 
@@ -616,7 +665,7 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 	// Composite a non-full-frame base clip onto a black canvas (after speed
 	// effects, so the canvas has the clip's output duration).
 	if needsCanvas {
-		s := c.placeOnCanvas(vstream{currentLabel, lastNode}, pl, cl.Duration(), cfg)
+		s := c.placeOnCanvas(vstream{currentLabel, lastNode}, pl, streamDur, cfg)
 		currentLabel, lastNode = s.label, s.node
 	}
 
@@ -635,6 +684,11 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		if isOverlay {
 			fadeParams["alpha"] = "1"
 		}
+		if head > 0 {
+			// The handle before the clip is not faded.
+			fadeParams["st"] = formatSeconds(head)
+			fadeParams["enable"] = engine.EscapeFilterValue(fmt.Sprintf("gte(t,%s)", formatSeconds(head)))
+		}
 		fadeNode := c.graph.AddFilter("fade", fadeParams)
 		fadeLabel := c.nextLabelFor("vfin", fadeNode)
 		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamVideo)
@@ -646,7 +700,7 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 	// On overlay tracks, alpha=1 fades the opacity so the clip fades out to
 	// transparent rather than to black.
 	if cl.FadeOutDuration() > 0 {
-		fadeOutStart := cl.Duration() - cl.FadeOutDuration()
+		fadeOutStart := head + cl.Duration() - cl.FadeOutDuration()
 		fadeParams := map[string]string{
 			"t":  "out",
 			"st": formatSeconds(fadeOutStart),
@@ -654,6 +708,10 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 		}
 		if isOverlay {
 			fadeParams["alpha"] = "1"
+		}
+		if edge.tail() > 0 {
+			// The handle after the clip is not faded.
+			fadeParams["enable"] = engine.EscapeFilterValue(fmt.Sprintf("lt(t,%s)", formatSeconds(head+cl.Duration())))
 		}
 		fadeNode := c.graph.AddFilter("fade", fadeParams)
 		fadeLabel := c.nextLabelFor("vfout", fadeNode)
@@ -678,6 +736,7 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 	return []clipLabel{{
 		video: currentLabel,
 		entry: entry,
+		edge:  edge,
 	}}, nil
 }
 
@@ -687,7 +746,7 @@ func (c *Compiler) compileVideoEntry(entry Placement, cfg Config, isOverlay bool
 // and whether the result still has to be composited onto a canvas (a base-layer
 // color that is translucent or smaller than the canvas). Text on upper tracks
 // is drawn by compileOverlayClip instead.
-func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config, pl clip.Placement, isOverlay bool) (string, *engine.Node, bool, error) {
+func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config, pl clip.Placement, isOverlay bool, d time.Duration) (string, *engine.Node, bool, error) {
 	cl := entry.Clip
 
 	switch v := cl.(type) {
@@ -698,7 +757,7 @@ func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config, pl clip.Pla
 		node := c.graph.AddFilter("color", map[string]string{
 			"c": colorHex,
 			"s": fmt.Sprintf("%dx%d", w, h),
-			"d": formatSeconds(v.Duration()),
+			"d": formatSeconds(d),
 			"r": fmt.Sprintf("%g", cfg.FPS),
 		})
 		label := c.nextLabelFor("gen", node)
@@ -723,7 +782,7 @@ func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config, pl clip.Pla
 		bgNode := c.graph.AddFilter("color", map[string]string{
 			"c": "black",
 			"s": fmt.Sprintf("%dx%d", cfg.Width, cfg.Height),
-			"d": formatSeconds(v.Duration()),
+			"d": formatSeconds(d),
 			"r": fmt.Sprintf("%g", cfg.FPS),
 		})
 		bgLabel := c.nextLabelFor("txtbg", bgNode)
@@ -750,113 +809,49 @@ func (c *Compiler) compileGeneratedClip(entry Placement, cfg Config, pl clip.Pla
 
 // compileAudioEntry processes a single audio clip placement into filter nodes.
 func (c *Compiler) compileAudioEntry(entry Placement) (string, error) {
-	cl := entry.Clip
-	path := cl.SourcePath()
+	return c.compileAudioEntryEdge(entry, clipEdge{}, true)
+}
 
-	if path == "" {
+// compileAudioEntryEdge is compileAudioEntry for a clip with transitions (its
+// sound includes the handles). With delay false the stream is not shifted to
+// the clip's start, so the caller can join it to its neighbours first.
+func (c *Compiler) compileAudioEntryEdge(entry Placement, edge clipEdge, delay bool) (string, error) {
+	if entry.Clip.SourcePath() == "" {
 		return "", nil // No source for generated clips.
 	}
-
-	inputNode := c.getOrAddInput(path)
-	inputIdx := c.graph.InputIndex(inputNode)
-
-	currentLabel := fmt.Sprintf("%d:a", inputIdx)
-	var lastNode *engine.Node = inputNode
-
-	// Apply trim.
-	if cl.IsTrimmed() {
-		trimNode := c.graph.AddFilter("atrim", map[string]string{
-			"start": formatSeconds(cl.TrimStart()),
-			"end":   formatSeconds(cl.TrimEnd()),
-		})
-		trimLabel := c.nextLabelFor("atrim", trimNode)
-		c.graph.Connect(lastNode, trimNode, currentLabel, engine.StreamAudio)
-
-		aptsNode := c.graph.AddFilter("asetpts", map[string]string{
-			"expr": "PTS-STARTPTS",
-		})
-		aptsLabel := c.nextLabelFor("apts", aptsNode)
-		c.graph.Connect(trimNode, aptsNode, trimLabel, engine.StreamAudio)
-
-		currentLabel = aptsLabel
-		lastNode = aptsNode
-	}
-
-	// Apply volume.
-	if cl.Volume() != 1.0 {
-		volNode := c.graph.AddFilter("volume", map[string]string{
-			"volume": fmt.Sprintf("%g", cl.Volume()),
-		})
-		volLabel := c.nextLabelFor("avol", volNode)
-		c.graph.Connect(lastNode, volNode, currentLabel, engine.StreamAudio)
-		currentLabel = volLabel
-		lastNode = volNode
-	}
-
-	// Apply composable audio effects from the clip's Effects() list.
-	for _, e := range cl.Effects() {
-		if e.Target() != effects.TargetAudio && e.Target() != effects.TargetBoth {
-			continue
-		}
-		currentLabel, lastNode = c.compileAudioEffect(e, currentLabel, lastNode, "afx")
-	}
-
-	// Keep audio in sync with SpeedUp/SlowDown applied to the picture.
-	if f := implicitAudioTempo(cl); f != 1.0 {
-		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, "afxspd")
-		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "afxfit")
-	} else if keepsAudioSpeed(cl) {
-		// Sound at normal speed: cut at the clip's end, or padded with
-		// silence when the picture is slowed down.
-		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "afxfit")
-	}
-
-	// Fades run after effects (AudioSpeed, implicit tempo) so that fade times
-	// are in output time, consistent with the video path.
-	// Apply audio fade in.
-	if cl.FadeInDuration() > 0 {
-		fadeNode := c.graph.AddFilter("afade", map[string]string{
-			"t":  "in",
-			"st": "0",
-			"d":  formatSeconds(cl.FadeInDuration()),
-		})
-		fadeLabel := c.nextLabelFor("afin", fadeNode)
-		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamAudio)
-		currentLabel = fadeLabel
-		lastNode = fadeNode
-	}
-
-	// Apply audio fade out.
-	if cl.FadeOutDuration() > 0 {
-		fadeOutStart := cl.Duration() - cl.FadeOutDuration()
-		fadeNode := c.graph.AddFilter("afade", map[string]string{
-			"t":  "out",
-			"st": formatSeconds(fadeOutStart),
-			"d":  formatSeconds(cl.FadeOutDuration()),
-		})
-		fadeLabel := c.nextLabelFor("afout", fadeNode)
-		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamAudio)
-		currentLabel = fadeLabel
-		lastNode = fadeNode
-	}
+	currentLabel := c.compileClipAudio(entry, edge, "a")
 
 	// Apply delay if the clip doesn't start at 0.
-	if entry.StartAt > 0 {
+	if delay && entry.StartAt > 0 {
 		delayNode := c.graph.AddFilter("adelay", map[string]string{
 			"delays": fmt.Sprintf("%d|%d", entry.StartAt.Milliseconds(), entry.StartAt.Milliseconds()),
 		})
 		delayLabel := c.nextLabelFor("adel", delayNode)
-		c.graph.Connect(lastNode, delayNode, currentLabel, engine.StreamAudio)
+		c.graph.Connect(c.findFilterByLabel(currentLabel), delayNode, currentLabel, engine.StreamAudio)
 		currentLabel = delayLabel
 	}
-
 	return currentLabel, nil
 }
 
 // compileAudioFromVideoEntry extracts and processes the audio from a video clip entry.
 func (c *Compiler) compileAudioFromVideoEntry(entry Placement) (string, error) {
+	return c.compileClipAudio(entry, clipEdge{}, "va"), nil
+}
+
+// compileClipAudio compiles a clip's sound: trim, volume, audio effects,
+// tempo following the picture's speed, and fades. The result starts at the
+// clip's start (or, with handles, edge.head() before it) at time 0.
+// p prefixes the filter labels ("a" for audio clips, "va" for the sound of
+// video clips).
+//
+// With handles (edge.extended()) the trim window is widened (soundWindow),
+// missing source becomes silence, and the stream is pinned to exactly
+// head + duration + tail so neighbouring clips can be cross-faded in sync.
+func (c *Compiler) compileClipAudio(entry Placement, edge clipEdge, p string) string {
 	cl := entry.Clip
 	path := cl.SourcePath()
+	ext := edge.extended()
+	head := edge.head()
 
 	inputNode := c.getOrAddInput(path)
 	inputIdx := c.graph.InputIndex(inputNode)
@@ -865,18 +860,25 @@ func (c *Compiler) compileAudioFromVideoEntry(entry Placement) (string, error) {
 	var lastNode *engine.Node = inputNode
 
 	// Apply trim.
-	if cl.IsTrimmed() {
-		trimNode := c.graph.AddFilter("atrim", map[string]string{
+	var lead time.Duration
+	if cl.IsTrimmed() || ext {
+		trimParams := map[string]string{
 			"start": formatSeconds(cl.TrimStart()),
 			"end":   formatSeconds(cl.TrimEnd()),
-		})
-		trimLabel := c.nextLabelFor("vatrim", trimNode)
+		}
+		if ext {
+			var start, end time.Duration
+			start, end, lead = soundWindow(cl, edge)
+			trimParams["start"], trimParams["end"] = formatPrecise(start), formatPrecise(end)
+		}
+		trimNode := c.graph.AddFilter("atrim", trimParams)
+		trimLabel := c.nextLabelFor(p+"trim", trimNode)
 		c.graph.Connect(lastNode, trimNode, currentLabel, engine.StreamAudio)
 
 		aptsNode := c.graph.AddFilter("asetpts", map[string]string{
 			"expr": "PTS-STARTPTS",
 		})
-		aptsLabel := c.nextLabelFor("vapts", aptsNode)
+		aptsLabel := c.nextLabelFor(p+"pts", aptsNode)
 		c.graph.Connect(trimNode, aptsNode, trimLabel, engine.StreamAudio)
 
 		currentLabel = aptsLabel
@@ -888,7 +890,7 @@ func (c *Compiler) compileAudioFromVideoEntry(entry Placement) (string, error) {
 		volNode := c.graph.AddFilter("volume", map[string]string{
 			"volume": fmt.Sprintf("%g", cl.Volume()),
 		})
-		volLabel := c.nextLabelFor("vavol", volNode)
+		volLabel := c.nextLabelFor(p+"vol", volNode)
 		c.graph.Connect(lastNode, volNode, currentLabel, engine.StreamAudio)
 		currentLabel = volLabel
 		lastNode = volNode
@@ -899,45 +901,65 @@ func (c *Compiler) compileAudioFromVideoEntry(entry Placement) (string, error) {
 		if e.Target() != effects.TargetAudio && e.Target() != effects.TargetBoth {
 			continue
 		}
-		currentLabel, lastNode = c.compileAudioEffect(e, currentLabel, lastNode, "vafx")
+		currentLabel, lastNode = c.compileAudioEffect(e, currentLabel, lastNode, p+"fx")
 	}
 
 	// Keep audio in sync with SpeedUp/SlowDown applied to the picture.
 	if f := implicitAudioTempo(cl); f != 1.0 {
-		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, "vafxspd")
-		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "vafxfit")
-	} else if keepsAudioSpeed(cl) {
+		currentLabel, lastNode = c.compileAudioEffect(effects.AudioSpeed(f), currentLabel, lastNode, p+"fxspd")
+		if !ext {
+			currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, p+"fxfit")
+		}
+	} else if keepsAudioSpeed(cl) && !ext {
 		// Sound at normal speed: cut at the clip's end, or padded with
 		// silence when the picture is slowed down.
-		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, "vafxfit")
+		currentLabel, lastNode = c.fitAudioDuration(cl.Duration(), currentLabel, lastNode, p+"fxfit")
+	}
+	if ext {
+		if lead > 0 {
+			ms := lead.Milliseconds()
+			s := c.then(vstream{currentLabel, lastNode}, "adelay", p+"lead", map[string]string{
+				"delays": fmt.Sprintf("%d", ms), "all": "1",
+			}, engine.StreamAudio)
+			currentLabel, lastNode = s.label, s.node
+		}
+		currentLabel, lastNode = c.fitAudioDuration(head+cl.Duration()+edge.tail(), currentLabel, lastNode, p+"fxfit")
 	}
 
-	// Apply the clip's fade in/out to its embedded audio, matching the
-	// visual fade. This runs last so the fade-out start (computed from the
-	// clip's output Duration) is in output time even after speed changes.
+	// Fades run after effects (AudioSpeed, implicit tempo) so that fade
+	// times are in output time, consistent with the video path. They cover
+	// the clip's own span only; the handles are not faded.
 	if cl.FadeInDuration() > 0 {
-		fadeNode := c.graph.AddFilter("afade", map[string]string{
+		params := map[string]string{
 			"t":  "in",
 			"st": "0",
 			"d":  formatSeconds(cl.FadeInDuration()),
-		})
-		fadeLabel := c.nextLabelFor("vafin", fadeNode)
+		}
+		if head > 0 {
+			params["st"] = formatSeconds(head)
+			params["enable"] = engine.EscapeFilterValue(fmt.Sprintf("gte(t,%s)", formatSeconds(head)))
+		}
+		fadeNode := c.graph.AddFilter("afade", params)
+		fadeLabel := c.nextLabelFor(p+"fin", fadeNode)
 		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamAudio)
 		currentLabel = fadeLabel
 		lastNode = fadeNode
 	}
 	if cl.FadeOutDuration() > 0 {
-		fadeNode := c.graph.AddFilter("afade", map[string]string{
+		params := map[string]string{
 			"t":  "out",
-			"st": formatSeconds(cl.Duration() - cl.FadeOutDuration()),
+			"st": formatSeconds(head + cl.Duration() - cl.FadeOutDuration()),
 			"d":  formatSeconds(cl.FadeOutDuration()),
-		})
-		fadeLabel := c.nextLabelFor("vafout", fadeNode)
+		}
+		if edge.tail() > 0 {
+			params["enable"] = engine.EscapeFilterValue(fmt.Sprintf("lt(t,%s)", formatSeconds(head+cl.Duration())))
+		}
+		fadeNode := c.graph.AddFilter("afade", params)
+		fadeLabel := c.nextLabelFor(p+"fout", fadeNode)
 		c.graph.Connect(lastNode, fadeNode, currentLabel, engine.StreamAudio)
 		currentLabel = fadeLabel
 	}
-
-	return currentLabel, nil
+	return currentLabel
 }
 
 // fitAudioDuration pads (with silence) or trims an audio stream to exactly d.
@@ -1049,14 +1071,22 @@ func (c *Compiler) compileGapClip(d time.Duration, cfg Config) clipLabel {
 // If any clips have paired audio, the audio is concatenated alongside the video.
 // Returns the final video label and (if applicable) the final audio label.
 func (c *Compiler) concatVideoClips(labels []clipLabel) (string, string) {
-	// Check if any clips have audio to concatenate.
-	hasAudio := false
+	return c.concatSegments(labels, anyAudio(labels))
+}
+
+// anyAudio reports whether any of the clips has a sound label.
+func anyAudio(labels []clipLabel) bool {
 	for _, cl := range labels {
 		if cl.audio != "" {
-			hasAudio = true
-			break
+			return true
 		}
 	}
+	return false
+}
+
+// concatSegments is concatVideoClips with the audio decision made by the
+// caller: with hasAudio, clips without sound get silence of their length.
+func (c *Compiler) concatSegments(labels []clipLabel, hasAudio bool) (string, string) {
 
 	audioFlag := "0"
 	if hasAudio {
@@ -1090,7 +1120,7 @@ func (c *Compiler) concatVideoClips(labels []clipLabel) (string, string) {
 				silenceNode := c.graph.AddFilter("anullsrc", map[string]string{
 					"r":  "48000",
 					"cl": "stereo",
-					"d":  formatSeconds(cl.entry.Clip.Duration()),
+					"d":  formatSeconds(cl.length()),
 				})
 				silenceLabel := c.nextLabelFor("asilence", silenceNode)
 				c.graph.Connect(silenceNode, concatNode, silenceLabel, engine.StreamAudio)

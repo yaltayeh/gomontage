@@ -49,7 +49,7 @@ project (gomontage.yaml exists and is valid).`,
 
 // validateProjectFile prints the check result of a project file in two
 // separate sections — project errors (schema, loader rules) and render
-// blockers (missing media, known gaps) — plus warnings and a summary line.
+// blockers (missing media or fonts) — plus warnings and a summary line.
 // It returns an error (exit status 1) if either section is non-empty.
 func validateProjectFile(cmd *cobra.Command, path string) error {
 	out := cmd.OutOrStdout()

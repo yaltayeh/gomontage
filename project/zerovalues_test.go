@@ -151,8 +151,7 @@ func TestZeroValues_Build(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	// The text track is a known gap (text clips); disable it so the rest
-	// builds, which also exercises enabled: false.
+	// Disable the text track, which exercises enabled: false.
 	p := parseZero(t, dir, func(d map[string]any) {
 		d["tracks"].([]any)[2].(map[string]any)["enabled"] = false
 		clips := func(i int) map[string]any {

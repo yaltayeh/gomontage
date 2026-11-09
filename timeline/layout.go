@@ -231,6 +231,16 @@ func textFadeAlpha(start, end, fadeIn, fadeOut time.Duration) string {
 // start time and overlaid with eof_action=pass, so the layers beneath show
 // through everywhere the clip isn't — before, after and around it.
 func (c *Compiler) compileOverlayClip(entry Placement, cfg Config, composite string) (string, string, error) {
+	return c.compileOverlayClipEdge(entry, cfg, composite, clipEdge{})
+}
+
+// compileOverlayClipEdge is compileOverlayClip for a clip with transitions:
+// the clip is shown from edge.head() before its start until edge.tail()
+// after its end, fading in (opacity) over its transition in and out over
+// its transition out, so it dissolves with its neighbours on the track.
+// Its sound, if any, is returned undelayed (starting edge.head() before
+// the clip) for chainAudio.
+func (c *Compiler) compileOverlayClipEdge(entry Placement, cfg Config, composite string, edge clipEdge) (string, string, error) {
 	cl := entry.Clip
 	start := entry.StartAt
 	end := start + cl.Duration()
@@ -238,21 +248,31 @@ func (c *Compiler) compileOverlayClip(entry Placement, cfg Config, composite str
 
 	if tc, ok := cl.(*clip.TextClip); ok {
 		p := drawtextParams(tc, pl)
-		p["enable"] = engine.EscapeFilterValue(fmt.Sprintf("between(t,%s,%s)", formatSeconds(start), formatSeconds(end)))
-		if a := textFadeAlpha(start, end, cl.FadeInDuration(), cl.FadeOutDuration()); a != "" {
+		p["enable"] = engine.EscapeFilterValue(fmt.Sprintf("between(t,%s,%s)", formatSeconds(start-edge.head()), formatSeconds(end+edge.tail())))
+		if a := textAlpha(start, end, cl.FadeInDuration(), cl.FadeOutDuration(), edge); a != "" {
 			p["alpha"] = engine.EscapeFilterValue(a)
 		}
 		out := c.then(c.streamOf(composite), "drawtext", "otext", p, engine.StreamVideo)
 		return out.label, "", nil
 	}
 
-	cls, err := c.compileVideoEntry(entry, cfg, true)
+	cls, err := c.compileVideoEntryEdge(entry, cfg, true, edge)
 	if err != nil {
 		return "", "", err
 	}
 	s := c.streamOf(cls[0].video)
+	if tr := edge.in; tr != nil {
+		s = c.then(s, "fade", "xin", map[string]string{
+			"t": "in", "st": "0", "d": formatSeconds(tr.Duration), "alpha": "1",
+		}, engine.StreamVideo)
+	}
+	if tr := edge.out; tr != nil {
+		s = c.then(s, "fade", "xout", map[string]string{
+			"t": "out", "st": formatSeconds(edge.head() + cl.Duration() - tr.Before()), "d": formatSeconds(tr.Duration), "alpha": "1",
+		}, engine.StreamVideo)
+	}
 	s = c.then(s, "setpts", "oshift", map[string]string{
-		"expr": fmt.Sprintf("PTS-STARTPTS+%s/TB", formatSeconds(start)),
+		"expr": fmt.Sprintf("PTS-STARTPTS+%s/TB", formatSeconds(start-edge.head())),
 	}, engine.StreamVideo)
 
 	x, y := overlayXY(pl)
@@ -263,11 +283,10 @@ func (c *Compiler) compileOverlayClip(entry Placement, cfg Config, composite str
 
 	audio := ""
 	if cl.HasAudio() && cl.SourcePath() != "" {
-		a, err := c.compileAudioFromVideoEntry(entry)
-		if err != nil {
-			return "", "", err
+		audio = c.compileClipAudio(entry, edge, "va")
+		if !edge.extended() {
+			audio = c.delayAudio(audio, start)
 		}
-		audio = c.delayAudio(a, start)
 	}
 	return ovLabel, audio, nil
 }

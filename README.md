@@ -134,9 +134,22 @@ tl, err := project.Build(p)                              // -> *timeline.Timelin
 err = project.Save("my-edit.gomontage.json", p)          // canonical, byte-stable
 ```
 
-Transitions are the one feature the library can't render yet; projects that
-use them are reported by `render`/`validate` as "render blockers" instead of
-being rendered differently (see the spec's "Known gaps").
+Every feature of the format renders, including crossfade transitions
+(`transition_in`, handle model). Problems that stop a valid project from
+rendering right now — e.g. a missing media file or font — are reported by
+`render`/`validate` as "render blockers" instead of being rendered
+differently.
+
+## Transitions
+
+```go
+track.Add(a, 0)
+track.AddWithTransition(b, a.Duration(), timeline.Crossfade(time.Second))
+```
+
+A transition is centred on the cut and uses source footage beyond the clips'
+trim points, so it never changes clip positions or the timeline length (see
+[docs/project-format.md §9](docs/project-format.md#9-transitions)).
 
 ---
 
