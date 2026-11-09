@@ -36,6 +36,18 @@ func (tl *Timeline) ExportSilent(profile *export.Profile, outputPath string) err
 	return tl.exportInternal(context.Background(), profile, outputPath, nil, false)
 }
 
+// ExportSilentContext is like ExportSilent with a context for cancellation
+// and an optional progress callback: nothing is printed to stdout or stderr,
+// and FFmpeg's own output is only kept for the error (engine.FFmpegError).
+// Servers and other embedders that report progress themselves use it.
+//
+// Progress.Percent and Progress.ETA are computed against the timeline's
+// duration. Cancelling ctx stops FFmpeg and returns ctx.Err() (the partial
+// output file is left for the caller to remove).
+func (tl *Timeline) ExportSilentContext(ctx context.Context, profile *export.Profile, outputPath string, onProgress engine.ProgressFunc) error {
+	return tl.exportInternal(ctx, profile, outputPath, onProgress, false)
+}
+
 // ExportWithProgress is like Export but reports progress via a callback
 // instead of using the built-in progress bar. Compilation and summary
 // lines are still printed to stderr.

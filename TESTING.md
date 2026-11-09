@@ -7,6 +7,7 @@ There are two layers of tests.
 | Unit | `go test ./...` or `make test` | No | Graph/command shape, clip/timeline logic. `timeline/testdata/no_transitions.golden` holds the FFmpeg commands of timelines without transitions, recorded before transitions were implemented: they must stay byte-identical (regenerate with `GOMONTAGE_UPDATE_GOLDEN=1` only for an intended change) |
 | Project package | `go test ./project/` (part of `go test ./...`) | No | Loader rules and exact messages (each `schema/testdata/loader` fixture produces exactly its recorded error), canonical Save (round trip, byte-stable, defaults omitted, examples are canonical), Build (DryRun of `simple-trim-concat` equals the hand-written Go timeline; every example builds with no render blockers; transitions map to timeline transitions) |
 | Project schema | `go test ./schema/` (part of `go test ./...`) | No | `schema/project.v1.schema.json` compiles, every file in `examples/` validates, invalid projects are rejected with useful errors, and the loader-level fixtures in `schema/testdata/loader/` are schema-valid and declare their expected loader error |
+| MCP server | `go test ./mcpserver/` (part of `go test ./...`) | No | In-memory MCP client against projects with placeholder media: `timeline_edit` atomic rollback (a failed batch leaves the file byte-identical, no snapshot), errors named by op index (including problems found in the result), ID references within a batch, trim/ripple/merge-patch semantics, history snapshots, reload of files changed on disk, `timeline_get` golden files (`mcpserver/testdata/`, regenerate with `GOMONTAGE_UPDATE_GOLDEN=1`), render dry run and output safety, preview window math, tool descriptions and resources |
 | End-to-end | `go test -tags e2e ./e2e/...` or `make test-e2e` | Yes | Real renders: durations, pixel colors, audio levels, codecs |
 
 ## End-to-end suite (`e2e/`)
@@ -38,6 +39,19 @@ plain `go test ./...` stays fast and never calls FFmpeg.
   and A/V sync over several transitions, upper-track logos, and audio tracks.
   `TestProject_RenderTransitionsExample` renders
   `examples/effects-transitions.json`.
+- MCP tests (`e2e/mcp_test.go`) drive the server through an in-memory MCP
+  client. They cover:
+  - the full create → import → edit → `timeline_get` → `preview_frame` →
+    `render` → `render_job` loop, with the output checked by ffprobe and
+    pixel colors;
+  - preview JPEG size and pixels (the crossfade midpoint, inside and after
+    a fade), cache hits, and cache invalidation after an edit;
+  - render progress up to 100, cancel, and FFmpeg error summaries.
+
+  `TestMCP_StdoutIsProtocolOnly` builds `gomontage-mcp` and checks over raw
+  stdio that every stdout line is a JSON-RPC message.
+  `TestExportSilentContext_*` checks that the silent export prints nothing,
+  reports progress and can be cancelled.
 
 ### Known-bug tests
 

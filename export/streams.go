@@ -13,7 +13,11 @@ var (
 		"opus": true, "ipod": true, "m4a": true, "adts": true, "aac": true,
 		"aiff": true, "aif": true,
 	}
-	videoOnlyFormats = map[string]bool{"gif": true, "apng": true}
+	videoOnlyFormats = map[string]bool{
+		"gif": true, "apng": true,
+		// Still images (one frame or a numbered sequence).
+		"image2": true, "jpg": true, "jpeg": true, "png": true, "webp": true,
+	}
 )
 
 // OutputStreams reports which stream types the profile's output can carry.
@@ -22,7 +26,8 @@ var (
 //
 //   - Audio-only containers (mp3, wav, flac, ogg, opus, m4a, aac, aiff):
 //     video=false, audio=true.
-//   - Video-only containers (gif, apng): video=true, audio=false.
+//   - Video-only containers (gif, apng, and still images: image2, jpg, png,
+//     webp): video=true, audio=false.
 //   - Anything else (mp4, mov, mkv, webm, ...): both true.
 //
 // The timeline compiler maps only the streams reported here, and returns an

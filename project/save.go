@@ -69,6 +69,17 @@ func marshal(p *Project, dir string) ([]byte, error) {
 	return encode(c)
 }
 
+// Clone returns a deep copy of p with the same Dir. Edits to the copy never
+// affect p (and the other way round).
+func (p *Project) Clone() *Project {
+	c, err := clone(p)
+	if err != nil {
+		// clone only re-decodes what encode produced from the same types.
+		panic(fmt.Sprintf("project: clone: %v", err))
+	}
+	return c
+}
+
 // clone deep-copies p through its JSON form (lossless: see Media.MarshalJSON).
 func clone(p *Project) (*Project, error) {
 	data, err := encode(p)

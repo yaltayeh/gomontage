@@ -34,6 +34,7 @@ You write Go. GoMontage handles the FFmpeg.
 
 ```bash
 go install github.com/ahmedhodiani/gomontage/cmd/gomontage@latest
+go install github.com/ahmedhodiani/gomontage/cmd/gomontage-mcp@latest   # MCP server (optional)
 ```
 
 ---
@@ -160,6 +161,56 @@ width/height (the YouTube and Reel presets do), the finished video is scaled
 to that size, keeping the aspect ratio and adding black bars if the aspect
 ratios differ. Profiles without a size (ProRes, H265, GIF, custom) output at
 the timeline size. See `docs/templates/export.md`.
+
+---
+
+## Use with Claude Code
+
+`gomontage-mcp` is an [MCP](https://modelcontextprotocol.io) server that lets
+Claude Code (or any MCP client) edit and render GoMontage projects.
+
+```bash
+go install github.com/ahmedhodiani/gomontage/cmd/gomontage-mcp@latest
+claude mcp add gomontage -- gomontage-mcp
+```
+
+(From a clone, `go build -o ~/go/bin/gomontage-mcp ./cmd/gomontage-mcp`
+does the same. FFmpeg and ffprobe must be on `PATH`.)
+
+It has seven tools:
+
+- `project_create` and `media_import` set up a project.
+- `timeline_get` returns a compact text view of the timeline, with the
+  check results.
+- `timeline_edit` takes one atomic batch of ops: add_track, add_clip, trim,
+  remove (with ripple) and update.
+- `preview_frame` returns one frame as a JPEG.
+- `render` starts an async render job, and `render_job` follows it.
+
+The project file is the state: every edit is saved at once, and the previous
+version is kept in `.gomontage/history/`. All times are in milliseconds.
+
+An example conversation:
+
+> **You:** In `~/trip`, make a 1080p video from `drive.mp4`, `beach.mp4` and
+> `sunset.mp4` with 1-second crossfades, the title "Road trip" for the first
+> 3 seconds, and `song.mp3` quietly underneath.
+>
+> **Claude** calls:
+> 1. `project_create` with preset `youtube_1080p`.
+> 2. `media_import` with the four files.
+> 3. One `timeline_edit` that adds the tracks, places the clips butt-joined
+>    with crossfade `transition_in`s, adds the text on a titles track, and
+>    adds the song at volume 0.3 with a fade-out.
+> 4. `timeline_get`, which reports `check: ok (renderable)`.
+> 5. `preview_frame` at 1000 ms, to check the title.
+> 6. `render`, then `render_job` with `wait_ms`.
+>
+> **Claude:** Rendered `~/trip/output/trip.mp4` (27040 ms). The title fades in
+> over the drive, the clips crossfade at 11000 and 19000 ms, and the song
+> fades out at the end.
+
+Every tool and op is documented in [docs/mcp.md](docs/mcp.md).
 
 ---
 

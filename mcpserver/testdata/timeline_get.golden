@@ -1,0 +1,30 @@
+project <dir>/fixture.gomontage.json
+name "fixture"
+format 1280x720 @ 30fps · duration 10000 ms
+output preset youtube_720p → output/fixture.mp4
+
+media (4)
+  m_a · video · 10000ms 640x360 30fps · +audio · media/a.mp4
+  m_b · video · 8000ms 640x360 30fps · +audio · media/b.mp4
+  m_logo · image · 200x100 · media/logo.png
+  m_song · audio · 30000ms 48000Hz 2ch · media/song.wav
+
+tracks (4; video tracks listed first draw at the bottom)
+  t_main · video "main" · 3 clips
+    c1 · video m_a · 0–4000 · src 1000–5000 · fade_in 500
+    c2 · video m_b · 4000–7000 · src 0–4500 · no audio · speed 1.5 (audio unchanged)
+    c3 · video m_a · 7000–10000 · src 6000–9000 · crossfade_in 500
+  t_logo · video "logo" · 2 clips
+    (gap 0–1000)
+    c_logo · image m_logo · 1000–6000 · pos 0.95,0.05 · anchor top-right · size 0.15xauto
+    (gap 6000–7000)
+    c_line_one_and_a_long · text "Line one\nand a long second line that ge…" · 7000–9000 · label "outro" · style #FFCC00 fonts/missing.ttf outline
+  t_music · audio "music" · 1 clip
+    c_song · audio m_song · 0–9000 · src 0–9000 · vol 0.3 · fade_out 1000
+  t_sfx · audio "sfx" · 1 clip · DISABLED
+    (gap 0–2000)
+    c_b · audio m_b · 2000–3000 · src 500–1500 · normalize -14 LUFS
+
+check: not renderable yet · 0 errors · 2 render blockers · 0 warnings
+  blocker media "m_logo": file not found: media/logo.png
+  blocker clip "c_line_one_and_a_long": font file not found: fonts/missing.ttf
