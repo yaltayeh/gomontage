@@ -303,3 +303,64 @@ func TestBuild_RenderChecks(t *testing.T) {
 		}
 	})
 }
+
+// BuildWith VideoOnly leaves every sound out and keeps the picture.
+func TestBuildWith_VideoOnly(t *testing.T) {
+	p := loadExampleWithFiles(t, "effects-transitions.json")
+	full, err := Build(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tl, err := BuildWith(p, BuildOptions{VideoOnly: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tl.AudioTracks()) != 0 {
+		t.Errorf("%d audio tracks, want 0", len(tl.AudioTracks()))
+	}
+	if tl.Duration() != full.Duration() {
+		t.Errorf("duration %s, want %s", tl.Duration(), full.Duration())
+	}
+	for _, e := range tl.VideoTracks()[0].Entries() {
+		if e.Clip.HasAudio() {
+			t.Errorf("clip at %s still has sound", e.StartAt)
+		}
+	}
+	cmd, err := tl.DryRun(export.YouTube1080p(), filepath.Join(p.Dir(), "out.mp4"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := cmd.String()
+	for _, a := range []string{"acrossfade", "amix", "atrim", "anullsrc"} {
+		if strings.Contains(s, a) {
+			t.Errorf("video-only command contains %q", a)
+		}
+	}
+	if !strings.Contains(s, "xfade") {
+		t.Error("video-only command lost the picture transitions")
+	}
+}
+
+// Clone is a deep copy: editing it never touches the original.
+func TestClone_IsDeep(t *testing.T) {
+	p := loadExampleWithFiles(t, "effects-transitions.json")
+	before, err := Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := p.Clone()
+	if c.Dir() != p.Dir() {
+		t.Errorf("Dir %q, want %q", c.Dir(), p.Dir())
+	}
+	c.Tracks[0].Clips[1].AtMS += 1000
+	c.Tracks[0].Clips[2].TransitionIn.DurationMS = 10
+	c.Media[0].Probe.DurationMS = 1
+	c.Tracks = append(c.Tracks, Track{ID: "t_new", Kind: KindVideo, Clips: []Clip{}})
+	after, err := Marshal(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(before) != string(after) {
+		t.Error("editing the clone changed the original")
+	}
+}

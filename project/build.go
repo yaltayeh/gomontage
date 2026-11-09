@@ -40,6 +40,22 @@ func Validate(p *Project) ([]Warning, error) {
 // Disabled tracks are skipped. Media paths in the timeline are resolved
 // against p.Dir().
 func Build(p *Project) (*timeline.Timeline, error) {
+	return BuildWith(p, BuildOptions{})
+}
+
+// BuildOptions changes what BuildWith puts into the timeline.
+type BuildOptions struct {
+	// VideoOnly leaves all sound out: audio tracks are skipped and video
+	// clips play without their sound. The picture is identical to Build's.
+	// Use it for still frames and other video-only previews, so FFmpeg
+	// doesn't decode audio that is thrown away.
+	VideoOnly bool
+}
+
+// BuildWith is Build with options. The checks are the same as Build's (a
+// project with render blockers in its audio is still rejected with
+// VideoOnly).
+func BuildWith(p *Project, opts BuildOptions) (*timeline.Timeline, error) {
 	r, q := check(p)
 	if len(r.ProjectErrors) > 0 {
 		return nil, r.Err()
@@ -57,7 +73,7 @@ func Build(p *Project) (*timeline.Timeline, error) {
 	tl := timeline.New(timeline.Config{Width: q.Format.Width, Height: q.Format.Height, FPS: q.Format.FPS})
 	for ti := range q.Tracks {
 		t := &q.Tracks[ti]
-		if !t.IsEnabled() {
+		if !t.IsEnabled() || (opts.VideoOnly && t.Kind != KindVideo) {
 			continue
 		}
 		name := t.Name
@@ -77,6 +93,9 @@ func Build(p *Project) (*timeline.Timeline, error) {
 			gc, err := buildClip(q, c)
 			if err != nil {
 				return nil, err
+			}
+			if v, ok := gc.(*clip.VideoClip); ok && opts.VideoOnly && v.HasAudio() {
+				gc = v.VideoOnly()
 			}
 			if tr := c.TransitionIn; tr != nil {
 				track.AddWithTransition(gc, ms(c.AtMS), timeline.Transition{Type: timeline.TransitionType(tr.Type), Duration: ms(tr.DurationMS)})
